@@ -26,7 +26,9 @@ export const SUITES = {
     triggers: [
       ...COMMON_INFRA_PATTERNS,
       /^scripts\/(?!benchmark-detector|build-browser-detector|build-extension)/,
-      /^skill\/(SKILL\.src\.md|agents\/|reference\/|scripts\/(cleanup-deprecated|concept-seed|context|context-signals|critique-storage|design-parser|doctor|hook|impeccable-paths|is-generated|lib\/(artifact-schema|composition-catalog|concept-catalog|provider|staleness|staleness-deep|staleness-notice|surface-briefs|target-slug|template-extensions)|pin|surface-brief))/,
+      /^picker\//,
+      /^skill\/(SKILL\.src\.md|agents\/|reference\/|scripts\/(cleanup-deprecated|context|context-signals|critique-storage|design-parser|hook|impeccable-paths|is-generated|lib\/provider|picker|pin))/,
+      /^site\/(pages|content|components|layouts)\//,
       /^README(\.npm)?\.md$/,
       /^cli\/bin\//,
     ],
@@ -64,6 +66,7 @@ export const SUITES = {
           'tests/hook.test.mjs',
           'tests/impeccable-paths.test.mjs',
           'tests/openai-plugin.test.mjs',
+          'tests/picker-server.test.mjs',
           'tests/pin.test.mjs',
           'tests/release.test.mjs',
           'tests/doctor.test.mjs',
