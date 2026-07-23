@@ -25,10 +25,9 @@ export const SUITES = {
     description: 'Build, provider transforms, CLI helpers, context, and storage unit tests.',
     triggers: [
       ...COMMON_INFRA_PATTERNS,
-      /^scripts\/(?!benchmark-detector|build-browser-detector|build-extension)/,
       /^picker\//,
-      /^skill\/(SKILL\.src\.md|agents\/|reference\/|scripts\/(cleanup-deprecated|context|context-signals|critique-storage|design-parser|hook|impeccable-paths|is-generated|lib\/provider|picker|pin))/,
-      /^site\/(pages|content|components|layouts)\//,
+      /^scripts\/(?!benchmark-detector|build-browser-detector|build-extension)/,
+      /^skill\/(SKILL\.src\.md|agents\/|reference\/|scripts\/(cleanup-deprecated|concept-seed|context|context-signals|critique-storage|design-parser|doctor|hook|impeccable-paths|is-generated|lib\/(artifact-schema|composition-catalog|concept-catalog|provider|staleness|staleness-deep|staleness-notice|surface-briefs|target-slug|template-extensions)|picker|pin|surface-brief))/,
       /^README(\.npm)?\.md$/,
       /^cli\/bin\//,
     ],
