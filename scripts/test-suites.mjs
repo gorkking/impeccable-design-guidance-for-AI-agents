@@ -162,6 +162,7 @@ export const SUITES = {
           'tests/live-svelte-component-accept.test.mjs',
           'tests/live-tanstack-adapter.test.mjs',
           'tests/live-target-context.test.mjs',
+          'tests/live-ui-surfaces.test.mjs',
           'tests/live-wrap.test.mjs',
           'tests/live-wrap-buffer-aware.test.mjs',
         ],
