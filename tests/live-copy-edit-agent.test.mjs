@@ -100,8 +100,19 @@ describe('live-copy-edit-agent', () => {
       pageUrl: '/',
       repair: {
         status: 'needs_decision',
+        attempt: 2,
+        maxAttempts: 3,
+        reason: 'source_verification_failed',
+        pageUrl: '/pricing',
         transactionId: huge,
-        failures: [{ message: huge, extra: huge }],
+        failures: [{
+          entryId: 'bounded',
+          message: huge,
+          candidates: [{ file: huge, line: 12, kind: 'text' }],
+          failures: [{ ref: huge, reason: huge }],
+          checks: [{ file: huge, reason: huge }],
+          extra: huge,
+        }],
         files: [huge],
         extra: huge,
       },
@@ -129,11 +140,21 @@ describe('live-copy-edit-agent', () => {
     assert.deepEqual(Object.keys(compact.repair).sort(), [
       'failures',
       'files',
+      'attempt',
+      'maxAttempts',
+      'pageUrl',
+      'reason',
       'status',
       'transactionId',
-    ]);
+    ].sort());
+    assert.equal(compact.repair.attempt, 2);
+    assert.equal(compact.repair.reason, 'source_verification_failed');
     assert.ok(compact.repair.transactionId.length < 400);
     assert.ok(compact.repair.failures[0].message.length < 400);
+    assert.equal(compact.repair.failures[0].entryId, 'bounded');
+    assert.ok(compact.repair.failures[0].candidates[0].file.length < 400);
+    assert.ok(compact.repair.failures[0].failures[0].ref.length < 400);
+    assert.ok(compact.repair.failures[0].checks[0].file.length < 400);
     assert.deepEqual(Object.keys(compact.candidates[0]).sort(), [
       'entryId',
       'ref',

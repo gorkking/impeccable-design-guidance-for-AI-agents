@@ -310,17 +310,21 @@ function compactBatchRepair(repair) {
   if (!repair || typeof repair !== 'object') return undefined;
   return {
     status: compactBatchString(repair.status),
+    attempt: normalizeOptionalBatchNumber(repair.attempt),
     attempts: normalizeOptionalBatchNumber(repair.attempts),
     maxAttempts: normalizeOptionalBatchNumber(repair.maxAttempts),
+    reason: compactBatchString(repair.reason),
     transactionId: compactBatchString(repair.transactionId),
+    pageUrl: compactBatchString(repair.pageUrl),
     failures: compactBatchDiagnostics(repair.failures),
     files: compactBatchStringList(repair.files, 20),
   };
 }
 
-function compactBatchDiagnostics(items) {
+function compactBatchDiagnostics(items, depth = 0) {
   if (!Array.isArray(items)) return undefined;
   return items.slice(0, 12).map((item) => ({
+    entryId: compactBatchString(item?.entryId || item?.id),
     reason: compactBatchString(item?.reason || item?.kind),
     detail: compactBatchString(item?.detail),
     message: compactBatchString(item?.message),
@@ -329,6 +333,9 @@ function compactBatchDiagnostics(items) {
     ref: compactBatchString(item?.ref),
     marker: compactBatchString(item?.marker),
     files: compactBatchStringList(item?.files, 8),
+    candidates: depth < 2 ? compactBatchSourceMatches(item?.candidates, 8) : undefined,
+    failures: depth < 2 ? compactBatchDiagnostics(item?.failures, depth + 1) : undefined,
+    checks: depth < 2 ? compactBatchDiagnostics(item?.checks, depth + 1) : undefined,
   }));
 }
 
@@ -357,6 +364,7 @@ function compactBatchSourceMatch(match) {
     file: compactBatchString(match.relativeFile || match.file),
     line: normalizeBatchNumber(match.line),
     column: normalizeBatchNumber(match.column),
+    kind: compactBatchString(match.kind),
     reason: compactBatchString(match.reason || match.kind),
     status: compactBatchString(match.status),
   };
