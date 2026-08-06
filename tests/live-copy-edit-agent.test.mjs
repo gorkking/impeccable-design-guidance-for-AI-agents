@@ -51,6 +51,49 @@ describe('live-copy-edit-agent', () => {
     assert.match(prompt, /Return ONLY JSON/);
   });
 
+  it('bounds and whitelists operation context in batch prompts', () => {
+    const huge = 'Z'.repeat(50_000);
+    const prompt = buildCopyEditBatchPrompt({
+      pageUrl: '/',
+      entries: [{
+        id: 'bounded',
+        pageUrl: '/',
+        ops: [{
+          classes: [huge],
+          originalText: 'Old',
+          newText: 'New',
+          sourceHint: {
+            file: 'src/App.jsx',
+            loc: '12:3',
+            nested: { payload: huge },
+          },
+          nearbyEditableTexts: [{
+            ref: 'body>main>span',
+            tag: 'span',
+            classes: ['label'],
+            text: huge,
+            extra: huge,
+          }],
+          contextHints: [huge],
+        }],
+      }],
+    });
+
+    const serializedBatch = prompt.split('Staged copy-edit batch:\n').pop();
+    const op = JSON.parse(serializedBatch).entries[0].ops[0];
+    assert.ok(prompt.length < 20_000, `expected compact prompt, got ${prompt.length} characters`);
+    assert.ok(op.classes[0].length < 400);
+    assert.deepEqual(op.sourceHint, {
+      file: 'src/App.jsx',
+      loc: '12:3',
+      line: 12,
+      column: 3,
+    });
+    assert.deepEqual(Object.keys(op.nearbyEditableTexts[0]).sort(), ['classes', 'ref', 'tag', 'text']);
+    assert.ok(op.nearbyEditableTexts[0].text.length < 400);
+    assert.ok(op.contextHints[0].length < 400);
+  });
+
   it('parses partial batch results', () => {
     assert.deepEqual(
       parseCopyEditBatchResult('{"status":"partial","appliedEntryIds":["a"],"failed":[{"entryId":"b","reason":"ambiguous"}],"files":["src/page.js"]}'),

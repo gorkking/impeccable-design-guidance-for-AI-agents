@@ -14,6 +14,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const DEFAULT_TIMEOUT_MS = 60_000;
+const BATCH_OP_TEXT_LIMIT = 240;
 const require = createRequire(import.meta.url);
 
 export function buildCopyEditBatchPrompt(batch, { cwd = process.cwd() } = {}) {
@@ -311,16 +312,57 @@ function compactBatchOp(op) {
     contextRef: op.contextRef,
     tag: op.tag,
     elementId: op.elementId,
-    classes: op.classes,
+    classes: compactBatchStringList(op.classes, 24),
     originalText: op.originalText,
     newText: op.newText,
     deleted: op.deleted === true || undefined,
-    sourceHint: op.sourceHint,
+    sourceHint: normalizeBatchSourceHint(op.sourceHint),
     leaf: compactContextForBatch(op.leaf),
-    nearbyEditableTexts: Array.isArray(op.nearbyEditableTexts) ? op.nearbyEditableTexts.slice(0, 8) : [],
+    nearbyEditableTexts: compactNearbyBatchTexts(op.nearbyEditableTexts),
     container: compactContextForBatch(op.container),
-    contextHints: Array.isArray(op.contextHints) ? op.contextHints.slice(0, 12) : [],
+    contextHints: compactBatchStringList(op.contextHints, 12),
   };
+}
+
+function normalizeBatchSourceHint(hint) {
+  if (!hint || typeof hint !== 'object') return null;
+  let line = Number.isFinite(Number(hint.line)) ? Number(hint.line) : null;
+  let column = Number.isFinite(Number(hint.column)) ? Number(hint.column) : null;
+  if ((!line || !column) && typeof hint.loc === 'string') {
+    const match = hint.loc.match(/^(\d+)(?::(\d+))?/);
+    if (match) {
+      line = Number(match[1]);
+      if (match[2]) column = Number(match[2]);
+    }
+  }
+  return {
+    file: compactBatchString(hint.file) || '',
+    loc: compactBatchString(hint.loc) || '',
+    line,
+    column,
+  };
+}
+
+function compactNearbyBatchTexts(items) {
+  return (Array.isArray(items) ? items : [])
+    .slice(0, 8)
+    .map((item) => typeof item === 'string' ? { text: truncate(item, BATCH_OP_TEXT_LIMIT) } : {
+      ref: compactBatchString(item?.ref),
+      tag: compactBatchString(item?.tag),
+      classes: compactBatchStringList(item?.classes, 24),
+      text: compactBatchString(item?.text),
+    });
+}
+
+function compactBatchStringList(items, limit) {
+  return (Array.isArray(items) ? items : [])
+    .slice(0, limit)
+    .filter((item) => typeof item === 'string')
+    .map((item) => truncate(item, BATCH_OP_TEXT_LIMIT));
+}
+
+function compactBatchString(value) {
+  return typeof value === 'string' ? truncate(value, BATCH_OP_TEXT_LIMIT) : undefined;
 }
 
 function compactContextForBatch(value) {
