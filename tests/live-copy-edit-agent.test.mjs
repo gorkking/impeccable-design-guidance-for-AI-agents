@@ -94,6 +94,60 @@ describe('live-copy-edit-agent', () => {
     assert.ok(op.contextHints[0].length < 400);
   });
 
+  it('bounds batch repair, candidate, and element context', () => {
+    const huge = 'Z'.repeat(250_000);
+    const prompt = buildCopyEditBatchPrompt({
+      pageUrl: '/',
+      repair: {
+        status: 'needs_decision',
+        transactionId: huge,
+        failures: [{ message: huge, extra: huge }],
+        files: [huge],
+        extra: huge,
+      },
+      entries: [{
+        id: 'bounded',
+        element: { ref: huge, tagName: huge, id: huge, classes: [huge], textContent: huge },
+        ops: [{
+          originalText: 'Old',
+          newText: 'New',
+          sourceHint: { file: 'src/App.jsx', line: null, column: null },
+        }],
+      }],
+      candidates: [{
+        entryId: 'bounded',
+        ref: huge,
+        sourceHint: { file: huge, line: null, extra: huge },
+        textMatches: [{ file: huge, reason: huge, extra: huge }],
+        extra: huge,
+      }],
+    });
+
+    const serializedBatch = prompt.split('Staged copy-edit batch:\n').pop();
+    const compact = JSON.parse(serializedBatch);
+    assert.ok(prompt.length < 25_000, `expected compact prompt, got ${prompt.length} characters`);
+    assert.deepEqual(Object.keys(compact.repair).sort(), [
+      'failures',
+      'files',
+      'status',
+      'transactionId',
+    ]);
+    assert.ok(compact.repair.transactionId.length < 400);
+    assert.ok(compact.repair.failures[0].message.length < 400);
+    assert.deepEqual(Object.keys(compact.candidates[0]).sort(), [
+      'entryId',
+      'ref',
+      'sourceHint',
+      'textMatches',
+    ]);
+    assert.ok(compact.candidates[0].ref.length < 400);
+    assert.ok(compact.candidates[0].sourceHint.file.length < 400);
+    assert.ok(compact.entries[0].element.ref.length < 400);
+    assert.ok(compact.entries[0].element.classes[0].length < 400);
+    assert.equal(compact.entries[0].ops[0].sourceHint.line, null);
+    assert.equal(compact.entries[0].ops[0].sourceHint.column, null);
+  });
+
   it('parses partial batch results', () => {
     assert.deepEqual(
       parseCopyEditBatchResult('{"status":"partial","appliedEntryIds":["a"],"failed":[{"entryId":"b","reason":"ambiguous"}],"files":["src/page.js"]}'),
