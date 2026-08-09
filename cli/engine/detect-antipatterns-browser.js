@@ -1218,10 +1218,18 @@ function parseAnyColor(s) {
 // True when a computed background-color string names no paint at all. Used to
 // tell "this layer is see-through" (walk on to the ancestor) apart from "this
 // layer has a color we could not read" (stop and abstain).
+//
+// `inherit` belongs here even though it is not literally see-through: it means
+// "paint with the parent's background-color", and walking on to the parent IS
+// that resolution. Real browsers resolve the keyword before getComputedStyle
+// output; only jsdom's partial cascade hands it through verbatim, and treating
+// it as unreadable would make the walk abstain on a surface it can know.
+// (`currentcolor` is NOT here — it is real paint in the element's own text
+// color; resolveBackgroundInfo substitutes the computed color for it.)
 function isNoPaintColorValue(value) {
   const v = String(value || '').trim().toLowerCase();
   if (!v) return true;
-  return v === 'transparent' || v === 'none' || v === 'initial' || v === 'unset' || v === 'revert' || v === 'revert-layer';
+  return v === 'transparent' || v === 'none' || v === 'initial' || v === 'inherit' || v === 'unset' || v === 'revert' || v === 'revert-layer';
 }
 
 // --- cli/engine/shared/fonts.mjs ---
@@ -2962,6 +2970,15 @@ function resolveBackgroundInfo(el, win, customPropMap) {
       }
     }
 
+    // `background-color: currentcolor` paints with the element's own text
+    // color — real paint whose value we know. Real browsers resolve the
+    // keyword before getComputedStyle output; jsdom hands it through
+    // verbatim, and without this substitution the layer would read as
+    // unparseable and force a needless abstention.
+    if ((!bg || bg.a < 0.1) && /^currentcolor$/i.test(String(style.backgroundColor || '').trim())) {
+      bg = parseRgb(style.color) || parseAnyColor(style.color);
+    }
+
     if (bg && bg.a > 0.1) {
       if (bg.a >= 0.99) return { color: flatten(bg), unresolved: false };
       overlays.push(bg);
@@ -2973,10 +2990,27 @@ function resolveBackgroundInfo(el, win, customPropMap) {
       // reporting an ancestor the visitor never sees.
       return { color: null, unresolved: true };
     }
-    // No solid bg-color at this level. A gradient or image at THIS level is
-    // the surface: hand the caller a null color so it falls back to the
-    // gradient's own stops (body grounds, gradient buttons, hero sections).
-    if (hasGradientOrUrl) return { color: null, unresolved: false };
+    // No solid bg-color at this level, but this level paints an image. CSS
+    // stacks background-image layers first-on-top, so which layer leads
+    // decides what the visitor sees:
+    //   • gradient on top — the gradient is the surface. Hand the caller a
+    //     null color so it falls back to the gradient's own stops (body
+    //     grounds, gradient buttons, hero sections).
+    //   • url() on top — the surface is an image whose pixels this engine
+    //     cannot read, and it may fully cover every layer and ancestor
+    //     beneath it. Same contract as an unparseable color: abstain, so
+    //     the gradient-stop fallback never measures a gradient the image
+    //     hides (the shipped miss: `url(photo), linear-gradient(...)`
+    //     reported low-contrast against the invisible gradient's stops).
+    if (hasGradientOrUrl) {
+      const topPaintLayer = splitTopLevelCommas(bgImage).find(
+        (layer) => /gradient\s*\(/i.test(layer) || /url\s*\(/i.test(layer),
+      );
+      const gradientOnTop = !!topPaintLayer
+        && /gradient\s*\(/i.test(topPaintLayer)
+        && !/^\s*url\s*\(/i.test(topPaintLayer);
+      return { color: null, unresolved: !gradientOnTop };
+    }
     current = current.parentElement;
   }
   // Every layer up to the document root was genuinely see-through, so the
@@ -3770,7 +3804,12 @@ function checkElementGlowDOM(el) {
   if (!boxShadow && !textShadow) return [];
   // Use parent's background — glow radiates outward, so the surrounding context matters
   // If resolveBackground returns null (gradient), try to infer from the gradient colors
-  let parentBg = el.parentElement ? resolveBackground(el.parentElement) : resolveBackground(el);
+  const parentBgInfo = resolveBackgroundInfo(el.parentElement || el);
+  // Unknown surface (an unreadable layer on the way up): abstain. The
+  // gradient hunt below would walk PAST that layer and score the glow
+  // against a background the visitor never sees.
+  if (parentBgInfo.unresolved) return [];
+  let parentBg = parentBgInfo.color;
   if (!parentBg) {
     // Gradient background — sample its colors to determine if it's dark
     let cur = el.parentElement;
@@ -3820,10 +3859,13 @@ function checkElementAIPaletteDOM(el) {
     const hue = getHue(textColor);
     const isAIPalette = (hue >= 160 && hue <= 200) || (hue >= 260 && hue <= 310);
     if (isAIPalette) {
-      const parentBg = el.parentElement ? resolveBackground(el.parentElement) : null;
-      // Also check gradient parents
-      let effectiveBg = parentBg;
-      if (!effectiveBg) {
+      const parentBgInfo = el.parentElement
+        ? resolveBackgroundInfo(el.parentElement)
+        : { color: null, unresolved: false };
+      // Unknown surface: leave effectiveBg null (no finding) rather than
+      // hunting gradient ancestors past a layer we could not read.
+      let effectiveBg = parentBgInfo.color;
+      if (!effectiveBg && !parentBgInfo.unresolved) {
         let cur = el.parentElement;
         while (cur && cur.nodeType === 1) {
           const gi = getComputedStyle(cur).backgroundImage || '';

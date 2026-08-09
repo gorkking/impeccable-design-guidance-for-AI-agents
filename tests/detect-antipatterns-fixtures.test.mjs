@@ -1380,6 +1380,8 @@ describe('detectHtml — dark themes written in modern color syntax', () => {
     ['#59595c', '#121215'],  // Flag Dim On Display P3 Panel
     ['#56514e', '#302b27'],  // Flag Dim On Lch Panel
     ['#bfbdb8', '#faf7f2'],  // Flag Pale On Light Panel
+    ['#c7c4bf', '#faf7f2'],  // Flag Pale On Inherited Light Panel
+    ['#bfbdb8', '#f0ede8'],  // Flag Pale On Currentcolor Panel
   ];
 
   it('flags text that genuinely fails against a ground the parser can read', async () => {
@@ -1411,6 +1413,18 @@ describe('detectHtml — dark themes written in modern color syntax', () => {
     assert.equal(
       pale.length, 0,
       `ivory copy on dark grounds must not flag, got: ${pale.map(r => r.snippet).join('; ')}`,
+    );
+  });
+
+  it('never measures a gradient hidden beneath an image layer', async () => {
+    // `url(...), linear-gradient(red, blue)` paints the image on top; the
+    // gradient is invisible. Falling back to its stops manufactured
+    // gray-on-color / low-contrast findings against colors nobody sees.
+    const f = await detectHtml(path.join(FIXTURES, 'dark-theme-modern-color.html'));
+    const hidden = f.filter(r => /#ff0000|#0000ff/i.test(r.snippet || ''));
+    assert.equal(
+      hidden.length, 0,
+      `no finding may reference the occluded gradient's stops, got: ${hidden.map(r => r.snippet).join('; ')}`,
     );
   });
 });

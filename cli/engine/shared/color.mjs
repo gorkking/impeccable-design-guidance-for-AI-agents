@@ -548,10 +548,18 @@ function parseAnyColor(s) {
 // True when a computed background-color string names no paint at all. Used to
 // tell "this layer is see-through" (walk on to the ancestor) apart from "this
 // layer has a color we could not read" (stop and abstain).
+//
+// `inherit` belongs here even though it is not literally see-through: it means
+// "paint with the parent's background-color", and walking on to the parent IS
+// that resolution. Real browsers resolve the keyword before getComputedStyle
+// output; only jsdom's partial cascade hands it through verbatim, and treating
+// it as unreadable would make the walk abstain on a surface it can know.
+// (`currentcolor` is NOT here — it is real paint in the element's own text
+// color; resolveBackgroundInfo substitutes the computed color for it.)
 function isNoPaintColorValue(value) {
   const v = String(value || '').trim().toLowerCase();
   if (!v) return true;
-  return v === 'transparent' || v === 'none' || v === 'initial' || v === 'unset' || v === 'revert' || v === 'revert-layer';
+  return v === 'transparent' || v === 'none' || v === 'initial' || v === 'inherit' || v === 'unset' || v === 'revert' || v === 'revert-layer';
 }
 
 export {

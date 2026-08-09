@@ -963,6 +963,10 @@ describe('detectUrl — browser-only fixtures', () => {
       ['#59595c', '#121215'],
       ['#56514e', '#302b27'],
       ['#bfbdb8', '#faf7f2'],
+      // Chrome resolves inherit / currentcolor before getComputedStyle
+      // output, so these two must flag natively as well.
+      ['#c7c4bf', '#faf7f2'],
+      ['#bfbdb8', '#f0ede8'],
     ];
 
     it('reads oklch / color() / lch grounds and never assumes white', async () => {
@@ -990,6 +994,14 @@ describe('detectUrl — browser-only fixtures', () => {
           `expected low-contrast for text ${text} on ${bg}, got: ${snippets.join('; ')}`,
         );
       }
+
+      // `url(...), linear-gradient(red, blue)` paints the image on top; no
+      // finding may measure against the occluded gradient's stops.
+      const hidden = f.filter(r => /#ff0000|#0000ff/i.test(r.snippet || ''));
+      assert.equal(
+        hidden.length, 0,
+        `no finding may reference the occluded gradient's stops, got: ${hidden.map(r => r.snippet).join('; ')}`,
+      );
     });
   });
 });
