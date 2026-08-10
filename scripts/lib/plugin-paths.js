@@ -25,10 +25,13 @@ export const CLAUDE_PROJECT_SCRIPTS_PATH = '.claude/skills/impeccable/scripts';
 export const PLUGIN_SCRIPTS_PATH = '<skill-base-dir>/scripts';
 
 // The project-path rule pre-approves a path inside the user's project, the
-// one place the plugin must NOT run scripts from. Claude Code Bash rules
-// support mid-pattern wildcards, so scope approval to the skill's own
-// scripts directory wherever the plugin cache puts it.
-export const PLUGIN_ALLOWED_TOOLS_RULE = 'Bash(node */skills/impeccable/scripts/*)';
+// one place the plugin must NOT run scripts from. No replacement rule
+// exists: a wildcard pattern such as `node */skills/impeccable/scripts/*`
+// auto-approves any same-shaped path anywhere on disk, and frontmatter has
+// no variable bound to the loaded plugin root (CLAUDE_PLUGIN_ROOT is
+// hook-only). The plugin copy drops the rule and script runs go through
+// the normal Bash confirmation.
+export const PROJECT_ALLOWED_TOOLS_LINE = `  - Bash(node ${CLAUDE_PROJECT_SCRIPTS_PATH}/*)\n`;
 
 // Setup step 1's second sentence names the project path as the fallback
 // when the runtime reports no base directory. A plugin install has no
@@ -47,10 +50,10 @@ const SETUP_PLUGIN_TEXT =
  */
 export function rewritePluginMarkdown(content) {
   return content
-    // Order matters: the allowed-tools rule contains the project path, so
-    // rewrite it before the generic path replacement turns it into a
-    // rule that matches nothing.
-    .replaceAll(`Bash(node ${CLAUDE_PROJECT_SCRIPTS_PATH}/*)`, PLUGIN_ALLOWED_TOOLS_RULE)
+    // Order matters: the allowed-tools line contains the project path, so
+    // remove it before the generic path replacement rewrites it into a
+    // line the removal no longer matches.
+    .replaceAll(PROJECT_ALLOWED_TOOLS_LINE, '')
     .replaceAll(SETUP_FALLBACK_TEXT, SETUP_PLUGIN_TEXT)
     .replaceAll(CLAUDE_PROJECT_SCRIPTS_PATH, PLUGIN_SCRIPTS_PATH);
 }
@@ -71,11 +74,11 @@ export function verifyPluginSkillRewrite(skillMdPath) {
       'scripts/lib/plugin-paths.js (issue #523); update SETUP_FALLBACK_TEXT to the new wording.',
     );
   }
-  if (!content.includes(PLUGIN_ALLOWED_TOOLS_RULE)) {
+  if (content.includes('Bash(node ')) {
     throw new Error(
-      `Plugin rewrite drift: ${skillMdPath} is missing the allowed-tools rule ` +
-      `${PLUGIN_ALLOWED_TOOLS_RULE}. SKILL.src.md's allowed-tools entry no longer matches the ` +
-      'replacement in scripts/lib/plugin-paths.js (issue #523).',
+      `Plugin rewrite drift: ${skillMdPath} still pre-approves a node script path. ` +
+      "SKILL.src.md's allowed-tools entry no longer matches the removal in " +
+      'scripts/lib/plugin-paths.js (issue #523); the plugin ships no node pre-approval.',
     );
   }
 }

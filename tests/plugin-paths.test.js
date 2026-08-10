@@ -7,7 +7,9 @@
  * points into the user's project: a plugin-only user gets MODULE_NOT_FOUND,
  * and a dual-install user silently runs the project's older skill copy. The
  * rewrite swaps every markdown instruction to the `<skill-base-dir>` form
- * and scopes the allowed-tools rule to the skill's own install path.
+ * and drops the node pre-approval: no frontmatter rule can bind approval to
+ * the loaded plugin root, and an unbound wildcard would auto-approve any
+ * same-shaped path anywhere on disk.
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import fs from 'fs';
@@ -18,7 +20,6 @@ import {
   rewritePluginMarkdownTree,
   verifyPluginSkillRewrite,
   CLAUDE_PROJECT_SCRIPTS_PATH,
-  PLUGIN_ALLOWED_TOOLS_RULE,
 } from '../scripts/lib/plugin-paths.js';
 
 describe('rewritePluginMarkdown', () => {
@@ -40,19 +41,20 @@ describe('rewritePluginMarkdown', () => {
     expect(output).toContain('node <skill-base-dir>/scripts/live-poll.mjs --reply EVENT_ID done');
   });
 
-  test('rewrites the allowed-tools rule to the install-path pattern, not a dead literal', () => {
+  test('removes the node pre-approval instead of widening it', () => {
     const frontmatter = [
       'allowed-tools:',
       '  - Bash(npx impeccable *)',
       '  - Bash(node .claude/skills/impeccable/scripts/*)',
+      '---',
+      '',
     ].join('\n');
     const output = rewritePluginMarkdown(frontmatter);
     // The generic path rewrite alone would leave Bash(node <skill-base-dir>/scripts/*),
-    // a rule that matches no real command. The allowed-tools rewrite must win.
-    expect(output).toContain(`  - ${PLUGIN_ALLOWED_TOOLS_RULE}`);
-    expect(output).not.toContain('Bash(node <skill-base-dir>/scripts/*)');
-    expect(output).not.toContain('Bash(node .claude/skills/impeccable/scripts/*)');
-    expect(output).toContain('  - Bash(npx impeccable *)');
+    // a dead literal, and any wildcard replacement would auto-approve
+    // same-shaped paths outside the plugin. The line must go entirely.
+    expect(output).not.toContain('Bash(node ');
+    expect(output).toContain('  - Bash(npx impeccable *)\n---');
   });
 
   test('drops the project-path fallback clause from Setup step 1', () => {
@@ -162,12 +164,12 @@ describe('verifyPluginSkillRewrite', () => {
     expect(() => verifyPluginSkillRewrite(p)).toThrow(/Setup step 1 fallback sentence/);
   });
 
-  test('fails the build when the allowed-tools rule no longer matched', () => {
+  test('fails the build when a node pre-approval survives the removal', () => {
     const reworded = goodSkill.replace(
       'Bash(node .claude/skills/impeccable/scripts/*)',
       'Bash(node .claude/skills/impeccable/scripts/**)',
     );
     const p = writeSkill(rewritePluginMarkdown(reworded));
-    expect(() => verifyPluginSkillRewrite(p)).toThrow(/allowed-tools/);
+    expect(() => verifyPluginSkillRewrite(p)).toThrow(/pre-approves a node script path/);
   });
 });
