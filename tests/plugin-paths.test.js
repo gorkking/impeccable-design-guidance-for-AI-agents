@@ -55,16 +55,21 @@ describe('rewritePluginMarkdown', () => {
     expect(output).toContain('  - Bash(npx impeccable *)');
   });
 
-  test('turns the Setup step 1 fallback parenthetical into the token definition', () => {
+  test('drops the project-path fallback clause from Setup step 1', () => {
     const input =
-      "1. Run `node .claude/skills/impeccable/scripts/context.mjs` once per session " +
-      "(if the runtime shows this skill's loaded base directory, run `node <skill-base-dir>/scripts/context.mjs`; " +
-      "keep cwd at the user's project). Pass a named source file or route as `--target <path>`.";
+      '1. Run `node <skill-base-dir>/scripts/context.mjs` once per session, where `<skill-base-dir>` is the ' +
+      "loaded base directory the runtime reports for this skill; keep cwd at the user's project. " +
+      'That base directory resolves every `node .claude/skills/impeccable/scripts/...` command in this skill ' +
+      'and its references, and `.claude/skills/impeccable/scripts` is the fallback only when the runtime ' +
+      'reports no base directory. Pass a named source file or route as `--target <path>`.';
     const output = rewritePluginMarkdown(input);
-    expect(output).toContain('Run `node <skill-base-dir>/scripts/context.mjs` once per session');
-    expect(output).toContain("(`<skill-base-dir>` is this skill's loaded base directory");
-    // The naive rewrite would leave the same command twice in one sentence.
-    expect(output.match(/<skill-base-dir>\/scripts\/context\.mjs/g)).toHaveLength(1);
+    expect(output).toContain(
+      'Every `node <skill-base-dir>/scripts/...` command in this skill and its references resolves against that base directory.',
+    );
+    // The naive rewrite would keep the fallback clause and name the token as
+    // its own fallback for when there is no base directory to resolve it.
+    expect(output).not.toContain('fallback');
+    expect(output).not.toContain(CLAUDE_PROJECT_SCRIPTS_PATH);
   });
 
   test('leaves unrelated project-relative paths alone', () => {
@@ -137,9 +142,11 @@ describe('verifyPluginSkillRewrite', () => {
     'allowed-tools:',
     '  - Bash(node .claude/skills/impeccable/scripts/*)',
     '',
-    "1. Run `node .claude/skills/impeccable/scripts/context.mjs` once per session " +
-      "(if the runtime shows this skill's loaded base directory, run `node <skill-base-dir>/scripts/context.mjs`; " +
-      "keep cwd at the user's project).",
+    '1. Run `node <skill-base-dir>/scripts/context.mjs` once per session, where `<skill-base-dir>` is the ' +
+      "loaded base directory the runtime reports for this skill; keep cwd at the user's project. " +
+      'That base directory resolves every `node .claude/skills/impeccable/scripts/...` command in this skill ' +
+      'and its references, and `.claude/skills/impeccable/scripts` is the fallback only when the runtime ' +
+      'reports no base directory.',
   ].join('\n');
 
   test('accepts a correctly rewritten SKILL.md', () => {
@@ -147,12 +154,12 @@ describe('verifyPluginSkillRewrite', () => {
     expect(() => verifyPluginSkillRewrite(p)).not.toThrow();
   });
 
-  test('fails the build when the Setup parenthetical no longer matched', () => {
-    // Simulate SKILL.src.md rewording step 1: the parenthetical replacement
-    // no-ops, so the definition of <skill-base-dir> never lands.
-    const reworded = goodSkill.replace('if the runtime shows', 'when the runtime displays');
+  test('fails the build when the Setup fallback sentence no longer matched', () => {
+    // Simulate SKILL.src.md rewording step 1: the sentence replacement
+    // no-ops, so the plugin copy keeps the project path as its fallback.
+    const reworded = goodSkill.replace('is the fallback only when', 'is used only when');
     const p = writeSkill(rewritePluginMarkdown(reworded));
-    expect(() => verifyPluginSkillRewrite(p)).toThrow(/Setup step 1 parenthetical/);
+    expect(() => verifyPluginSkillRewrite(p)).toThrow(/Setup step 1 fallback sentence/);
   });
 
   test('fails the build when the allowed-tools rule no longer matched', () => {

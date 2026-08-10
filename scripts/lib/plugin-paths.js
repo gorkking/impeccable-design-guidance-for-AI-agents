@@ -13,9 +13,9 @@ import path from 'path';
  *
  * There is no literal path that works for plugins (CLAUDE_PLUGIN_ROOT is
  * hook-only), so the plugin's markdown uses the `<skill-base-dir>` form
- * that SKILL.md's Setup step 1 already carries as a fallback: the runtime
- * shows the skill's loaded base directory when it loads the skill, and
- * scripts resolve against that.
+ * SKILL.md's Setup step 1 already leads with: the runtime shows the
+ * skill's loaded base directory when it loads the skill, and scripts
+ * resolve against that.
  */
 
 // The resolved {{scripts_path}} in dist/claude-code output, fixed by the
@@ -30,13 +30,16 @@ export const PLUGIN_SCRIPTS_PATH = '<skill-base-dir>/scripts';
 // scripts directory wherever the plugin cache puts it.
 export const PLUGIN_ALLOWED_TOOLS_RULE = 'Bash(node */skills/impeccable/scripts/*)';
 
-// Setup step 1's parenthetical describes the base-dir form as a fallback.
-// In the plugin copy that form is the primary (and only) form, so the
-// parenthetical becomes the definition of the token every instruction uses.
+// Setup step 1's second sentence names the project path as the fallback
+// when the runtime reports no base directory. A plugin install has no
+// working project fallback (that path is the bug this rewrite exists to
+// fix), and every instruction in the plugin copy already carries the
+// token, so the sentence loses its fallback clause.
 const SETUP_FALLBACK_TEXT =
-  "(if the runtime shows this skill's loaded base directory, run `node <skill-base-dir>/scripts/context.mjs`; keep cwd at the user's project)";
+  'That base directory resolves every `node .claude/skills/impeccable/scripts/...` command in this skill and its references, ' +
+  'and `.claude/skills/impeccable/scripts` is the fallback only when the runtime reports no base directory.';
 const SETUP_PLUGIN_TEXT =
-  "(`<skill-base-dir>` is this skill's loaded base directory, shown by the runtime when it loads the skill; keep cwd at the user's project)";
+  'Every `node <skill-base-dir>/scripts/...` command in this skill and its references resolves against that base directory.';
 
 /**
  * Rewrite one markdown file's content for the plugin subtree. Pure, so the
@@ -54,17 +57,17 @@ export function rewritePluginMarkdown(content) {
 
 /**
  * Fail the build when the copied SKILL.md no longer matches the rewrite.
- * The parenthetical replacement keys on the exact Setup step 1 text; if
+ * The fallback-sentence replacement keys on the exact Setup step 1 text; if
  * SKILL.src.md rewords it, replaceAll silently no-ops and the plugin ships
- * a redundant (but still correct) instruction. Loud beats redundant: the
- * build stops here so plugin-paths.js gets updated alongside the source.
+ * the project path as its fallback. Loud beats wrong: the build stops here
+ * so plugin-paths.js gets updated alongside the source.
  */
 export function verifyPluginSkillRewrite(skillMdPath) {
   const content = fs.readFileSync(skillMdPath, 'utf-8');
   if (!content.includes(SETUP_PLUGIN_TEXT)) {
     throw new Error(
-      `Plugin rewrite drift: ${skillMdPath} is missing the <skill-base-dir> definition. ` +
-      "SKILL.src.md's Setup step 1 parenthetical no longer matches the replacement in " +
+      `Plugin rewrite drift: ${skillMdPath} is missing the <skill-base-dir> resolution sentence. ` +
+      "SKILL.src.md's Setup step 1 fallback sentence no longer matches the replacement in " +
       'scripts/lib/plugin-paths.js (issue #523); update SETUP_FALLBACK_TEXT to the new wording.',
     );
   }
