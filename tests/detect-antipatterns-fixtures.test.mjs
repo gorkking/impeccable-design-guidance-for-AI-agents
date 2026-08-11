@@ -255,6 +255,23 @@ describe('detectHtml — static HTML/CSS fixtures', () => {
     );
   });
 
+  it('color: a color-mix gradient stop never leaks its nested ingredient as a phantom surface', async () => {
+    // The stop paints as a 16% wash composited near-black over the dark
+    // wrap; the bright oklch(90% ...) nested inside the color-mix is an
+    // ingredient, never painted. Re-extracting nested tokens appended it as
+    // a phantom opaque stop, and the worst-case ratio then flagged the
+    // light text at ~1:1 against a color nobody sees.
+    const f = await detectHtml(path.join(FIXTURES, 'color.html'));
+    const phantom = f.filter(r =>
+      (r.antipattern === 'low-contrast' || r.antipattern === 'gray-on-color') &&
+      /#ded9cf/i.test(r.snippet || '')
+    );
+    assert.equal(
+      phantom.length, 0,
+      `light text on the mixed wash must not flag: ${phantom.map(r => r.snippet).join('; ')}`,
+    );
+  });
+
   it('color: white text on background-image url() ancestor is not flagged as low-contrast', async () => {
     const f = await detectHtml(path.join(FIXTURES, 'color.html'));
     // The pass column has white text on a div with background-image: url().
@@ -1076,6 +1093,12 @@ describe('detectHtml — dark glow', () => {
     assert.equal(
       glow.filter(g => /#10b981/i.test(g.snippet)).length, 0,
       'offset chromatic shadow on unknown surface must not be scored',
+    );
+    // Translucent gradient over a url() image blends with pixels the engine
+    // cannot read; the wash stops must never be scored as the surface.
+    assert.equal(
+      glow.filter(g => /#f43f5e/i.test(g.snippet)).length, 0,
+      'offset chromatic shadow under a translucent wash over an image must abstain',
     );
   });
 });

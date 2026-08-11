@@ -128,6 +128,18 @@ describe('detectUrl — browser-only fixtures', () => {
       glow.filter(g => /#10b981/i.test(g.snippet || '')).length, 0,
       'offset chromatic shadow on unknown surface must not be scored',
     );
+    // Gradient-over-image split: an opaque gradient provably covers the
+    // image, so the dark-background tell may score against its stops; a
+    // translucent wash blends with unknowable pixels (a white photo under a
+    // 20% black wash paints ~#cccccc, not black), so the walk abstains.
+    assert.ok(
+      glow.some(g => /Colored box-shadow glow \(#f97316\) on dark background/i.test(g.snippet || '')),
+      'expected colored-glow finding under a provably opaque gradient over an image',
+    );
+    assert.equal(
+      glow.filter(g => /#f43f5e/i.test(g.snippet || '')).length, 0,
+      'offset chromatic shadow under a translucent wash over an image must abstain',
+    );
   });
 
   it('image-backed text: the overlay default pass pixel-samples the image itself', async () => {

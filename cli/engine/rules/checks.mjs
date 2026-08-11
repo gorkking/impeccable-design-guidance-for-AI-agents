@@ -1842,13 +1842,30 @@ function resolveBackgroundInfo(el, win, customPropMap) {
     //     hides (the shipped miss: `url(photo), linear-gradient(...)`
     //     reported low-contrast against the invisible gradient's stops).
     if (hasGradientOrUrl) {
-      const topPaintLayer = splitTopLevelCommas(bgImage).find(
+      const layers = splitTopLevelCommas(bgImage);
+      const topPaintLayer = layers.find(
         (layer) => /gradient\s*\(/i.test(layer) || /url\s*\(/i.test(layer),
       );
       const gradientOnTop = !!topPaintLayer
         && /gradient\s*\(/i.test(topPaintLayer)
         && !/^\s*url\s*\(/i.test(topPaintLayer);
-      return { color: null, unresolved: !gradientOnTop };
+      if (!gradientOnTop) return { color: null, unresolved: true };
+      // Gradient on top of a url() layer: the image shows through wherever
+      // the gradient is not fully opaque, so a translucent wash like
+      // `linear-gradient(rgba(0,0,0,.2), rgba(0,0,0,.2)), url(photo)` paints
+      // a blend with pixels this engine cannot read. Only a gradient whose
+      // every readable stop is opaque provably covers the image; otherwise
+      // the surface is unknown — abstain rather than hand callers gradient
+      // stops (or a stop average) the visitor never sees unmixed.
+      const urlBeneath = layers.some(
+        (layer) => layer !== topPaintLayer && /url\s*\(/i.test(layer),
+      );
+      if (urlBeneath) {
+        const topStops = parseGradientColors(topPaintLayer);
+        const provablyOpaque = topStops.length > 0 && topStops.every((s) => (s.a ?? 1) >= 0.99);
+        if (!provablyOpaque) return { color: null, unresolved: true };
+      }
+      return { color: null, unresolved: false };
     }
     current = current.parentElement;
   }
@@ -1860,21 +1877,6 @@ function resolveBackgroundInfo(el, win, customPropMap) {
 
 function resolveBackground(el, win, customPropMap) {
   return resolveBackgroundInfo(el, win, customPropMap).color;
-}
-
-// parseGradientColors (shared) reads only the legacy serializations: rgb()
-// and hex stops. Browsers keep modern-space stops in computed backgroundImage
-// exactly as authored — `linear-gradient(oklch(7% 0.006 95), …)` stays oklch —
-// which is what every token-driven page produces. Route those through
-// parseAnyColor so a gradient ground is measurable rather than invisible.
-function parseGradientColorsModern(bgImage) {
-  if (!bgImage || !/gradient/i.test(bgImage)) return [];
-  const colors = parseGradientColors(bgImage);
-  for (const m of bgImage.matchAll(/(?:oklch|oklab|hsla?|hwb)\(\s*[^()]*\)/gi)) {
-    const c = parseAnyColor(m[0]);
-    if (c) colors.push(c);
-  }
-  return colors;
 }
 
 // Walk parents looking for a gradient background and return its color stops.
@@ -1900,7 +1902,10 @@ function resolveGradientStops(el, win, customPropMap) {
     if (bgImage && bgImage !== 'none' && /url\s*\(/i.test(bgImage)) return null;
     let stops = null;
     if (bgImage && bgImage !== 'none' && /gradient/i.test(bgImage)) {
-      const parsed = parseGradientColorsModern(bgImage);
+      // parseGradientColors (shared) reads modern-space stops too — oklch,
+      // color-mix and friends via balanced-paren token capture — so browser
+      // computed values that keep the authored syntax stay measurable.
+      const parsed = parseGradientColors(bgImage);
       if (parsed.length > 0) stops = parsed;
     }
     if (!stops && !DETECTOR_IS_BROWSER) {
@@ -1908,7 +1913,7 @@ function resolveGradientStops(el, win, customPropMap) {
       const rawStyle = current.getAttribute?.('style') || '';
       const bgMatch = rawStyle.match(/background(?:-image)?\s*:\s*([^;]+)/i);
       if (bgMatch && /gradient/i.test(bgMatch[1])) {
-        const parsed = parseGradientColorsModern(bgMatch[1]);
+        const parsed = parseGradientColors(bgMatch[1]);
         if (parsed.length > 0) stops = parsed;
       }
     }
@@ -2702,11 +2707,13 @@ function checkElementGlowDOM(el) {
   if (!parentBg && !parentBgInfo.unresolved) {
     // Gradient background — sample its colors to determine if it's dark.
     // Modern-syntax parsing matters here: body-level gradients now reach this
-    // fallback in browser mode, and their stops usually serialize as oklch.
+    // fallback in browser mode, and their stops usually serialize as oklch —
+    // which the shared parseGradientColors reads via its color-function
+    // token capture.
     let cur = el.parentElement;
     while (cur && cur.nodeType === 1) {
       const bgImage = getComputedStyle(cur).backgroundImage || '';
-      const gradColors = parseGradientColorsModern(bgImage);
+      const gradColors = parseGradientColors(bgImage);
       if (gradColors.length > 0) {
         // Average the gradient colors
         const avg = { r: 0, g: 0, b: 0 };
