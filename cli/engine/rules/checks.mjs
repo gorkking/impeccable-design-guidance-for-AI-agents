@@ -1742,7 +1742,12 @@ function resolveBackgroundInfo(el, win, customPropMap) {
     // verbatim, and without this substitution the layer would read as
     // unparseable and force a needless abstention.
     if ((!bg || bg.a < 0.1) && /^currentcolor$/i.test(String(style.backgroundColor || '').trim())) {
-      bg = parseRgb(style.color) || parseAnyColor(style.color);
+      // The static cascade resolves var() text tokens before checks run, so
+      // style.color is normally already an rgb string here; parseColorResolved
+      // is defense in depth for any future caller that passes a live
+      // customPropMap (it matches the text-color path in checkElementColors
+      // and reduces to parseAnyColor when the map is null or absent).
+      bg = parseRgb(style.color) || parseColorResolved(style.color, customPropMap);
     }
 
     if (bg && bg.a > 0.1) {
@@ -2571,12 +2576,14 @@ function checkElementGlowDOM(el) {
   // Use parent's background — glow radiates outward, so the surrounding context matters
   // If resolveBackground returns null (gradient), try to infer from the gradient colors
   const parentBgInfo = resolveBackgroundInfo(el.parentElement || el);
-  // Unknown surface (an unreadable layer on the way up): abstain. The
-  // gradient hunt below would walk PAST that layer and score the glow
-  // against a background the visitor never sees.
-  if (parentBgInfo.unresolved) return [];
+  // Unknown surface (an unreadable layer on the way up): skip only the
+  // gradient hunt below, which would walk PAST that layer and score the
+  // glow against a background the visitor never sees. checkGlow still runs
+  // with a null surface: the zero-offset chromatic halo tell holds on ANY
+  // background, and the static loop already passes the unresolved walk's
+  // null color straight through (detect-html.mjs uses resolveBackground).
   let parentBg = parentBgInfo.color;
-  if (!parentBg) {
+  if (!parentBg && !parentBgInfo.unresolved) {
     // Gradient background — sample its colors to determine if it's dark
     let cur = el.parentElement;
     while (cur && cur.nodeType === 1) {

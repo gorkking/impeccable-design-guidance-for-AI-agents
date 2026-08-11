@@ -112,6 +112,23 @@ describe('detectUrl — browser-only fixtures', () => {
     }
   });
 
+  it('dark-glow: unreadable url() surface keeps zero-offset halos, abstains on offset chromatic shadows', async () => {
+    // Mirrors the static assertions in detect-antipatterns-fixtures.test.mjs.
+    // The browser adapter (checkElementGlowDOM) once returned [] for the
+    // whole element when the parent surface was unresolved, which also
+    // dropped zero-offset chromatic halos that need no background at all.
+    const f = await detectUrl(`${baseUrl}/fixtures/antipatterns/glow.html`, { visualContrast: false });
+    const glow = f.filter(r => r.antipattern === 'dark-glow');
+    assert.ok(
+      glow.some(g => /Zero-offset box-shadow glow \(#d946ef\)/i.test(g.snippet || '')),
+      'expected zero-offset halo finding under unreadable image surface',
+    );
+    assert.equal(
+      glow.filter(g => /#10b981/i.test(g.snippet || '')).length, 0,
+      'offset chromatic shadow on unknown surface must not be scored',
+    );
+  });
+
   it('shadowed form.id: a <form> with <input name="id"> does not crash the scan (issue #407)', async () => {
     // HTMLFormElement named-property shadowing makes form.id / form.className
     // return the child input element, whose .startsWith throws. Every Shopify

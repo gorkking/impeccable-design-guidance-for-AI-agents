@@ -224,6 +224,37 @@ describe('detectHtml — static HTML/CSS fixtures', () => {
     );
   });
 
+  it('color: currentcolor surface resolves var() text color instead of abstaining', async () => {
+    // background-color: currentcolor paints with the element's own text
+    // color, which in jsdom can itself be a var() token. The surface is
+    // knowable through the custom-prop map, so the faint text on it is a
+    // real low-contrast finding — abstention here would hide it.
+    const f = await detectHtml(path.join(FIXTURES, 'color.html'));
+    assert.ok(
+      f.some(r =>
+        r.antipattern === 'low-contrast' &&
+        /#cfc9bd/i.test(r.snippet || '') &&
+        /#e8e2d6/i.test(r.snippet || '')
+      ),
+      'expected low-contrast finding on the currentcolor var() surface',
+    );
+    // Good contrast on the same surface must not flag.
+    const goodFP = f.filter(r =>
+      (r.antipattern === 'low-contrast' || r.antipattern === 'gray-on-color') &&
+      /#3a352c/i.test(r.snippet || '')
+    );
+    assert.equal(goodFP.length, 0, `dark ink on bone must pass, got: ${goodFP.map(r => r.snippet).join('; ')}`);
+    // An undefined token keeps the surface unknowable: abstain, don't guess.
+    const unknownFP = f.filter(r =>
+      (r.antipattern === 'low-contrast' || r.antipattern === 'gray-on-color') &&
+      /#efe9dd/i.test(r.snippet || '')
+    );
+    assert.equal(
+      unknownFP.length, 0,
+      `unresolvable currentcolor surface must abstain, got: ${unknownFP.map(r => r.snippet).join('; ')}`,
+    );
+  });
+
   it('color: white text on background-image url() ancestor is not flagged as low-contrast', async () => {
     const f = await detectHtml(path.join(FIXTURES, 'color.html'));
     // The pass column has white text on a div with background-image: url().
@@ -987,17 +1018,30 @@ describe('detectHtml — motion', () => {
 
 describe('detectHtml — dark glow', () => {
   // Calibrated static baseline — see motion test note above.
-  // 11 element-level findings (glow-blue, glow-purple, glow-cyan, glow-multi,
+  // 12 element-level findings (glow-blue, glow-purple, glow-cyan, glow-multi,
   // inline pink, glow-oklch, glow-hex, glow-hsl, glow-var, glow-text,
-  // glow-light-oklch) + 1 page-level text-scan finding. Pass column adds none.
+  // glow-light-oklch, glow-photo-halo) + 1 page-level text-scan finding.
+  // Pass column adds none.
   it('glow: flag column triggers dark-glow, pass column adds none', async () => {
     const f = await detectHtml(path.join(FIXTURES, 'glow.html'));
     const glow = f.filter(r => r.antipattern === 'dark-glow');
-    assert.equal(glow.length, 12);
+    assert.equal(glow.length, 13);
     // Every finding is a glow tell, none reference the pass-column shadows
     for (const g of glow) {
       assert.match(g.snippet, /Zero-offset (box|text)-shadow glow|Colored (box|text)-shadow glow/);
     }
+    // Zero-offset halo under an unreadable url() surface still fires: the
+    // halo tell does not depend on the background at all.
+    assert.ok(
+      glow.some(g => /Zero-offset box-shadow glow \(#d946ef\)/i.test(g.snippet)),
+      'expected zero-offset halo finding under unreadable image surface',
+    );
+    // Offset chromatic shadow under the same unreadable surface abstains:
+    // the dark-background tell needs a surface we can actually read.
+    assert.equal(
+      glow.filter(g => /#10b981/i.test(g.snippet)).length, 0,
+      'offset chromatic shadow on unknown surface must not be scored',
+    );
   });
 });
 
