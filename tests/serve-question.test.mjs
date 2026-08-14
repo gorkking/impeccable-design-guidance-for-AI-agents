@@ -192,10 +192,32 @@ describe('serve-question', () => {
     assert.equal(slashSlash.status, 400);
     assert.equal((await fetch(url)).status, 200);
 
+    // The build-path flip commands the agent through --wait, so it takes the
+    // same key and Origin gate as /answer.
+    const flipPath = path.join(dir, '.impeccable', 'questions', `${key}.flip.json`);
+    const flipBody = JSON.stringify({ value: 'comp' });
+    const noKeyFlip = await fetch(`http://${goodHost}/build-path`, { method: 'POST', headers: jsonHeaders, body: flipBody });
+    assert.equal(noKeyFlip.status, 401);
+    assert.equal(existsSync(flipPath), false);
+    const evilOriginFlip = await rawRequest(port, {
+      method: 'POST',
+      path: `/build-path?key=${key}`,
+      headers: { ...jsonHeaders, Origin: 'https://evil.example' },
+    }, flipBody);
+    assert.equal(evilOriginFlip.status, 403);
+    assert.equal(existsSync(flipPath), false);
+    const okFlip = await fetch(`http://${goodHost}/build-path?key=${key}`, { method: 'POST', headers: jsonHeaders, body: flipBody });
+    assert.equal(okFlip.status, 200);
+    assert.equal(existsSync(flipPath), true);
+    const flipped = await run(['--wait', '--key', key, '--poll', '2']);
+    assert.equal(flipped.code, 0);
+    assert.match(flipped.out, /BUILD PATH FLIPPED/);
+
     const html = await (await fetch(url)).text();
     assert.match(html, /const KEY = "seckey"/);
     assert.match(html, /\/answer' \+ keyQ/);
     assert.match(html, /\/heartbeat' \+ keyQ/);
+    assert.match(html, /\/build-path' \+ keyQ/);
 
     const ok = await fetch(`http://${goodHost}/answer?key=${key}`, { method: 'POST', headers: jsonHeaders, body });
     assert.equal(ok.status, 200);

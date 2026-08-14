@@ -1220,7 +1220,7 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
     };
     const apply = (value) => {
       set(value);
-      fetch('/build-path', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }) });
+      fetch('/build-path' + keyQ, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }) });
       if (value === 'comp') enterComp(); else exitComp();
     };
     // Flipping to comp starts real generation, so it confirms first; the
@@ -1490,6 +1490,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.method === 'POST' && pathname === '/build-path') {
+    if (rejectDetachedPost(req, res, url, port)) return;
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
