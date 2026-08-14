@@ -190,9 +190,9 @@ describe('serve-question', () => {
     assert.equal(dead, 2, 'a truly missing process must still read as gone');
   });
 
-  it('renders anatomy, streams late sketches, and returns the chosen sketch', async () => {
+  it('renders anatomy, streams late comps, and returns the chosen comp', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'serve-question-'));
-    const sketchPath = path.join(dir, 'sketches', 'assigned.webp');
+    const compPath = path.join(dir, 'comps', 'assigned.webp');
     const payload = {
       title: 'Choose the visual world',
       options: [
@@ -200,7 +200,9 @@ describe('serve-question', () => {
           id: 'assigned', label: 'Fillmore Handbill', kicker: 'THE ROLL',
           thesis: 'The gig poster idea.', palette: ['#e8452c', '#f5d64c'], materials: ['letterpress'],
           viewport: 'Full-bleed dated bill.', risk: 'Nostalgia trap.',
-          sketch: sketchPath, hero: 'https://impeccable.style/worlds/cards/x-hero.webp',
+          // The legacy key: a payload authored against the sketch-era schema
+          // must keep rendering, so the lead card declares its comp as `sketch`.
+          sketch: compPath, hero: 'https://impeccable.style/worlds/cards/x-hero.webp',
         },
         { id: 'challenger-1', label: 'Teletext Service', case: 'Fuses cleanly.' },
       ],
@@ -222,24 +224,25 @@ describe('serve-question', () => {
     assert.match(html, /class="tag">letterpress/);
     assert.match(html, /The gig poster idea\./);
     assert.match(html, /Fuses cleanly\./);
-    // The inspiration image rides picture-in-picture beside the sketch slot.
+    // The inspiration image rides picture-in-picture beside the comp slot.
     assert.match(html, /class="pip"/);
-    assert.match(html, /media sketching/);
+    assert.match(html, /media comp-pending/);
     // canonCard renders as a subordinate card and suppresses the footer action.
     assert.match(html, /card canon/);
     assert.match(html, /Play it straight</);
     assert.doesNotMatch(html, /<button id="canon"/);
-    // The sketch slot 404s until the file lands, then serves it.
-    const slot = html.match(/data-sketch="(\/img\/\d+)"/)?.[1];
-    assert.ok(slot, 'sketch slot registered before the file exists');
+    // The comp slot 404s until the file lands, then serves it.
+    const slot = html.match(/data-comp="(\/img\/\d+)"/)?.[1];
+    assert.ok(slot, 'comp slot registered before the file exists');
     assert.equal((await fetch(url.replace(/\/$/, '') + slot)).status, 404);
     const { mkdirSync } = await import('node:fs');
-    mkdirSync(path.dirname(sketchPath), { recursive: true });
-    writeFileSync(sketchPath, 'RIFFxxxxWEBP');
+    mkdirSync(path.dirname(compPath), { recursive: true });
+    writeFileSync(compPath, 'RIFFxxxxWEBP');
     assert.equal((await fetch(url.replace(/\/$/, '') + slot)).status, 200);
     // The page polls with a cache-busting query; the route must tolerate it.
     assert.equal((await fetch(url.replace(/\/$/, '') + slot + '?t=1')).status, 200);
-    // The answer carries the chosen card's sketch for comp seeding.
+    // The answer carries the chosen card's comp for comp seeding, under the
+    // canonical key even when the payload declared it with the legacy one.
     await fetch(`${url}answer`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -247,7 +250,7 @@ describe('serve-question', () => {
     });
     const code = await new Promise((resolve) => child.on('exit', resolve));
     assert.equal(code, 0);
-    assert.match(read(), /"sketch":/);
+    assert.match(read(), /"comp":/);
     assert.match(read(), /CHOSEN COMP:/);
   });
 });
