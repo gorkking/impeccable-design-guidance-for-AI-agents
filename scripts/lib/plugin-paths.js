@@ -42,7 +42,7 @@ const SETUP_FALLBACK_TEXT =
   'That base directory resolves every `node .claude/skills/impeccable/scripts/...` command in this skill and its references, ' +
   'and `.claude/skills/impeccable/scripts` is the fallback only when the runtime reports no base directory.';
 const SETUP_PLUGIN_TEXT =
-  'Every `node <skill-base-dir>/scripts/...` command in this skill and its references resolves against that base directory.';
+  'Every `node "<skill-base-dir>/scripts/..."` command in this skill and its references resolves against that base directory.';
 
 /**
  * Rewrite one markdown file's content for the plugin subtree. Pure, so the
@@ -55,7 +55,13 @@ export function rewritePluginMarkdown(content) {
     // line the removal no longer matches.
     .replaceAll(PROJECT_ALLOWED_TOOLS_LINE, '')
     .replaceAll(SETUP_FALLBACK_TEXT, SETUP_PLUGIN_TEXT)
-    .replaceAll(CLAUDE_PROJECT_SCRIPTS_PATH, PLUGIN_SCRIPTS_PATH);
+    .replaceAll(CLAUDE_PROJECT_SCRIPTS_PATH, PLUGIN_SCRIPTS_PATH)
+    // <skill-base-dir> expands to a real path at run time, and an unquoted
+    // path with spaces splits before node sees it. Quote every command's
+    // script argument, including the token-form commands SKILL.src.md
+    // carries natively (Setup step 1). Runs after the path replacement so
+    // one pattern covers both origins; already-quoted forms don't match.
+    .replace(/node <skill-base-dir>\/scripts\/([^\s`"]+)/g, 'node "<skill-base-dir>/scripts/$1"');
 }
 
 /**
@@ -79,6 +85,14 @@ export function verifyPluginSkillRewrite(skillMdPath) {
       `Plugin rewrite drift: ${skillMdPath} still pre-approves a node script path. ` +
       "SKILL.src.md's allowed-tools entry no longer matches the removal in " +
       'scripts/lib/plugin-paths.js (issue #523); the plugin ships no node pre-approval.',
+    );
+  }
+  if (content.includes(CLAUDE_PROJECT_SCRIPTS_PATH)) {
+    throw new Error(
+      `Plugin rewrite drift: ${skillMdPath} still contains the project-relative scripts path ` +
+      `(${CLAUDE_PROJECT_SCRIPTS_PATH}). A wording or path shape in SKILL.src.md slipped past ` +
+      'the replacements in scripts/lib/plugin-paths.js (issue #523); the plugin copy must not ' +
+      "reference the project's scripts directory.",
     );
   }
 }

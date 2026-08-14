@@ -23,22 +23,34 @@ import {
 } from '../scripts/lib/plugin-paths.js';
 
 describe('rewritePluginMarkdown', () => {
-  test('rewrites a script instruction to the skill-base-dir form', () => {
+  test('rewrites a script instruction to the quoted skill-base-dir form', () => {
     const input = 'Run `node .claude/skills/impeccable/scripts/context.mjs` once per session.';
     expect(rewritePluginMarkdown(input)).toBe(
-      'Run `node <skill-base-dir>/scripts/context.mjs` once per session.',
+      'Run `node "<skill-base-dir>/scripts/context.mjs"` once per session.',
     );
   });
 
-  test('rewrites every occurrence, not just the first', () => {
+  test('rewrites every occurrence, quoting the script path but not the arguments', () => {
     const input = [
       'node .claude/skills/impeccable/scripts/live.mjs',
       'node .claude/skills/impeccable/scripts/live-poll.mjs --reply EVENT_ID done',
     ].join('\n');
     const output = rewritePluginMarkdown(input);
     expect(output).not.toContain(CLAUDE_PROJECT_SCRIPTS_PATH);
-    expect(output).toContain('node <skill-base-dir>/scripts/live.mjs');
-    expect(output).toContain('node <skill-base-dir>/scripts/live-poll.mjs --reply EVENT_ID done');
+    expect(output).toContain('node "<skill-base-dir>/scripts/live.mjs"');
+    expect(output).toContain('node "<skill-base-dir>/scripts/live-poll.mjs" --reply EVENT_ID done');
+  });
+
+  test('quotes commands already in the skill-base-dir form without double-quoting', () => {
+    // SKILL.src.md's Setup step 1 carries the token form natively; a base
+    // directory with spaces splits an unquoted path before node sees it.
+    const input =
+      'Run `node <skill-base-dir>/scripts/context.mjs` once per session. ' +
+      'Already quoted: `node "<skill-base-dir>/scripts/detect.mjs"`.';
+    expect(rewritePluginMarkdown(input)).toBe(
+      'Run `node "<skill-base-dir>/scripts/context.mjs"` once per session. ' +
+      'Already quoted: `node "<skill-base-dir>/scripts/detect.mjs"`.',
+    );
   });
 
   test('removes the node pre-approval instead of widening it', () => {
@@ -66,7 +78,7 @@ describe('rewritePluginMarkdown', () => {
       'reports no base directory. Pass a named source file or route as `--target <path>`.';
     const output = rewritePluginMarkdown(input);
     expect(output).toContain(
-      'Every `node <skill-base-dir>/scripts/...` command in this skill and its references resolves against that base directory.',
+      'Every `node "<skill-base-dir>/scripts/..."` command in this skill and its references resolves against that base directory.',
     );
     // The naive rewrite would keep the fallback clause and name the token as
     // its own fallback for when there is no base directory to resolve it.
@@ -108,10 +120,10 @@ describe('rewritePluginMarkdownTree', () => {
     rewritePluginMarkdownTree(root);
 
     expect(fs.readFileSync(path.join(root, 'SKILL.md'), 'utf-8')).toBe(
-      'Run `node <skill-base-dir>/scripts/context.mjs`.',
+      'Run `node "<skill-base-dir>/scripts/context.mjs"`.',
     );
     expect(fs.readFileSync(path.join(root, 'reference/live.md'), 'utf-8')).toBe(
-      'node <skill-base-dir>/scripts/live.mjs',
+      'node "<skill-base-dir>/scripts/live.mjs"',
     );
     expect(fs.readFileSync(path.join(root, 'scripts/hook-admin.mjs'), 'utf-8')).toContain(
       '${CLAUDE_PROJECT_DIR}/.claude/skills/impeccable/scripts/hook.mjs',
@@ -171,5 +183,15 @@ describe('verifyPluginSkillRewrite', () => {
     );
     const p = writeSkill(rewritePluginMarkdown(reworded));
     expect(() => verifyPluginSkillRewrite(p)).toThrow(/pre-approves a node script path/);
+  });
+
+  test('fails the build when the project-relative scripts path survives at all', () => {
+    // Simulate a path shape the replacements don't know: the rewritten copy
+    // still names the project scripts directory somewhere new.
+    const p = writeSkill(
+      rewritePluginMarkdown(goodSkill) +
+      '\nState lives next to `.claude/skills/impeccable/scripts` on disk.',
+    );
+    expect(() => verifyPluginSkillRewrite(p)).toThrow(/still contains the project-relative scripts path/);
   });
 });
