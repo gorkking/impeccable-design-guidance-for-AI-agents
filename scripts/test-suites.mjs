@@ -108,6 +108,7 @@ export const SUITES = {
           'tests/detect-antipatterns-fixtures.test.mjs',
           'tests/detect-antipatterns-browser.test.mjs',
           'tests/detect-cli-design-contamination.test.mjs',
+          'tests/detect-cli-stdin-dispatch.test.mjs',
         ],
       },
     ],
