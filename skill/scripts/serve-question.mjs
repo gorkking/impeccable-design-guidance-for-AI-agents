@@ -1417,12 +1417,16 @@ ${buildPath?.toggle ? `<div id="bp-confirm" role="dialog" aria-modal="true" aria
 </script>`;
 }
 
+// Browsers omit the :80 suffix on the default HTTP port, so a server on
+// --port 80 sees bare loopback hosts and origins.
 function allowedHost(host, port) {
-  return host === `127.0.0.1:${port}` || host === `localhost:${port}`;
+  if (host === `127.0.0.1:${port}` || host === `localhost:${port}`) return true;
+  return port === 80 && (host === '127.0.0.1' || host === 'localhost');
 }
 
 function allowedOrigin(origin, port) {
-  return origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`;
+  if (origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`) return true;
+  return port === 80 && (origin === 'http://127.0.0.1' || origin === 'http://localhost');
 }
 
 function rejectDetachedPost(req, res, url, port) {

@@ -185,6 +185,14 @@ describe('serve-question', () => {
     });
     assert.equal(spoofedHostGet.status, 403);
 
+    // The bare-host allowance exists only for --port 80, where browsers omit
+    // the suffix; on any other port a portless Host stays rejected.
+    const bareHostGet = await rawRequest(port, {
+      path: '/',
+      headers: { Host: '127.0.0.1' },
+    });
+    assert.equal(bareHostGet.status, 403);
+
     const slashSlash = await rawRequest(port, {
       path: '//',
       headers: { Host: goodHost },
