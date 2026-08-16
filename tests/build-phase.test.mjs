@@ -13,6 +13,7 @@ import { gridToBox, measureRegions, platePrompt } from '../skill/scripts/comp-sp
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SPEC_SCRIPT = path.join(ROOT, 'skill', 'scripts', 'comp-spec.mjs');
 const PHASE_SCRIPT = path.join(ROOT, 'skill', 'scripts', 'build-phase.mjs');
+const FONT_SCRIPT = path.join(ROOT, 'skill', 'scripts', 'font-match.mjs');
 
 function lcg(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 0xffffffff); }
 
@@ -157,6 +158,13 @@ describe('build-phase state machine (CLI)', () => {
     res = run(SPEC_SCRIPT, ['--comp', 'comp.png', '--regions', 'regions.json'], dir);
     assert.equal(res.status, 0, res.stderr);
     assert.match(res.stdout, /PLATES 1 to produce: art/);
+    // type must be measured before spec closes
+    res = run(PHASE_SCRIPT, ['advance'], dir);
+    assert.equal(res.status, 2, res.stdout);
+    assert.match(res.stdout, /has no type measurement/);
+    res = run(FONT_SCRIPT, ['--measure', 'headline'], dir);
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /MEASURE headline/);
     res = run(PHASE_SCRIPT, ['advance'], dir);
     assert.equal(res.status, 0, res.stdout + res.stderr);
     assert.match(res.stdout, /ADVANCED spec -> plates/);

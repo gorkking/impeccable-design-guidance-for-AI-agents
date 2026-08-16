@@ -235,8 +235,16 @@ if (plateId) {
     else size = needW > 1024 ? '1536x1024' : '1024x1024';
   }
   const extra = arg('prompt') || (arg('prompt-file') ? fs.readFileSync(arg('prompt-file'), 'utf8') : '');
-  const prompt = [platePrompt(spec, region), extra].filter(Boolean).join(' ');
-  plateCtx = { spec, specPath, region, ref, refPath, out, size, prompt, comp, encodePng, resize };
+  // Chroma: an ink-on-ground plate (a line drawing, a figure on flat ground)
+  // is generated on a flat key color and keyed to alpha, so the page's own
+  // ground shows through instead of a second, mismatched paper. Default on
+  // for kind plate when the comp region reads as ink over one flat ground;
+  // --chroma / --no-chroma force it.
+  const wantsChroma = process.argv.includes('--chroma') ? true : process.argv.includes('--no-chroma') ? false : (region.kind === 'plate' && inkOnGround(region));
+  const chromaColor = '#00ff00';
+  const chromaLine = wantsChroma ? ` Render the artwork on a perfectly flat, uniform bright green background (${chromaColor}) that fills every pixel not covered by the artwork; no paper texture, no vignette, no shadow on the green; the green will be removed and the artwork composited onto the page's own surface.` : '';
+  const prompt = [platePrompt(spec, region), extra, chromaLine].filter(Boolean).join(' ');
+  plateCtx = { spec, specPath, region, ref, refPath, out, size, prompt, comp, encodePng, resize, chroma: wantsChroma ? chromaColor : null };
   if (process.env.IMPECCABLE_IMAGE_GEN_FAKE) {
     const up = resize(ref, ref.width * 2, ref.height * 2);
     fs.writeFileSync(out, encodePng(up, { text: { 'impeccable:prompt': prompt } }));
@@ -247,11 +255,66 @@ if (plateId) {
   // fall through to the real call below with the crop as the single --ref
 }
 
+/** A region whose crop is dominated by one ground color with a dark second: ink on ground. */
+function inkOnGround(region) {
+  const pal = region.palette || [];
+  if (pal.length < 2) return false;
+  return pal[0].coverage >= 0.55;
+}
+
+function hexRgb(h) { const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(h); return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [0, 255, 0]; }
+
+/**
+ * Key a flat color to alpha with a soft edge: pixels within `hard` of the key
+ * go fully transparent, within `soft` fade, and green spill on edge pixels is
+ * pulled toward the ink color. Writes back in place. Returns keyed fraction.
+ */
+async function keyChroma(file, keyHex) {
+  const { decodePng, encodePng } = await import('./lib/png.mjs');
+  const img = decodePng(fs.readFileSync(file));
+  const [kr, kg, kb] = hexRgb(keyHex);
+  // sample the actual key from the corners: generators shift the green
+  const corners = [[2, 2], [img.width - 3, 2], [2, img.height - 3], [img.width - 3, img.height - 3]];
+  let sr = 0, sg = 0, sb = 0;
+  for (const [x, y] of corners) { const p = (y * img.width + x) * 4; sr += img.data[p]; sg += img.data[p + 1]; sb += img.data[p + 2]; }
+  const key = [sr / 4, sg / 4, sb / 4];
+  const isGreenish = key[1] > 120 && key[1] > key[0] * 1.4 && key[1] > key[2] * 1.4;
+  const K = isGreenish ? key : [kr, kg, kb];
+  const hard = 60, soft = 120;
+  let keyed = 0;
+  for (let i = 0; i < img.data.length; i += 4) {
+    const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
+    const d = Math.sqrt((r - K[0]) ** 2 + (g - K[1]) ** 2 + (b - K[2]) ** 2);
+    // also treat "greener than both other channels by a margin" as key, for gradients the generator adds
+    const greenDom = g > 150 && g - Math.max(r, b) > 60;
+    if (d < hard || greenDom) { img.data[i + 3] = 0; keyed++; continue; }
+    if (d < soft) {
+      const a = (d - hard) / (soft - hard);
+      img.data[i + 3] = Math.round(img.data[i + 3] * a);
+      // despill: pull green down to the mean of the others on the fringe
+      const m = (r + b) / 2; img.data[i + 1] = Math.round(g * a + m * (1 - a));
+    }
+  }
+  fs.writeFileSync(file, encodePng(img));
+  return keyed / (img.data.length / 4);
+}
+
 async function scorePlate(ctx, outFile) {
   try {
     const { compare } = await import('./comp-diff.mjs');
     const { decodePng } = await import('./lib/png.mjs');
-    const plate = decodePng(fs.readFileSync(outFile));
+    let plate = decodePng(fs.readFileSync(outFile));
+    // a keyed plate ships over the page ground: composite it over the region's
+    // sampled ground before scoring, the way it will show
+    if (ctx.chroma) {
+      const { createImage, blit } = await import('./lib/raster.mjs');
+      const g = (ctx.region.palette && ctx.region.palette[0] && ctx.region.palette[0].hex) || '#ffffff';
+      const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(g);
+      const ground = m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16), 255] : [255, 255, 255, 255];
+      const over = createImage(plate.width, plate.height, ground);
+      blit(over, plate, 0, 0);
+      plate = over;
+    }
     // a plate ships under object-fit: cover, so score it the way it will show
     const res = compare({ comp: ctx.ref, build: plate, align: 'cover', kind: ctx.region.kind });
     const s = res.whole;
@@ -356,4 +419,8 @@ try {
   fs.writeFileSync(`${out}.json`, JSON.stringify({ prompt, createdAt: new Date().toISOString(), tool: 'generate-image.mjs', model: 'gpt-image-2', ...(refs.length ? { refs } : {}) }, null, 2));
 } catch { /* embedding is best-effort */ }
 console.log(`IMAGE: ${out} (${size}, ${quality}, gpt-image-2, billed to your OpenAI key); prompt embedded + sidecar at ${out}.json`);
+if (plateCtx && plateCtx.chroma) {
+  const frac = await keyChroma(out, plateCtx.chroma);
+  console.log(`PLATE-CHROMA keyed ${(frac * 100).toFixed(0)}% of pixels to alpha (${plateCtx.chroma}); place with a plain <img> over the page's own ground, no background on the plate. If the keyed fraction is under 20% the generator ignored the key: regenerate with --no-chroma and use mix-blend-mode: multiply instead.`);
+}
 if (plateCtx) await scorePlate(plateCtx, out);

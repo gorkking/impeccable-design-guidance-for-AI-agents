@@ -190,6 +190,20 @@ export function resolveRegions(comp, spec) {
 }
 
 /** Crop a normalized region; regions thinner than 48px in either axis are grown to that so tiny strips do not swing on subpixel noise. */
+/** Bounding box of ink (pixels darker/lighter than the region's ground by a margin) within a crop, in px. */
+export function inkBox(img) {
+  const g = toGray(img);
+  // ground = median gray; ink = |v - ground| > 48
+  const sample = []; for (let i = 0; i < g.data.length; i += Math.max(1, Math.floor(g.data.length / 4000))) sample.push(g.data[i]);
+  sample.sort((p, q) => p - q); const ground = sample[Math.floor(sample.length / 2)] || 255;
+  let x0 = img.width, y0 = img.height, x1 = -1, y1 = -1;
+  for (let y = 0; y < img.height; y++) for (let x = 0; x < img.width; x++) {
+    if (Math.abs(g.data[y * img.width + x] - ground) > 48) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  if (x1 < 0) return null;
+  return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
 function regionCrop(img, r) {
   const minPx = 48;
   let x = r.x * img.width, y = r.y * img.height, w = r.w * img.width, h = r.h * img.height;
@@ -261,7 +275,7 @@ export function compare({ comp, build, spec = null, align = 'top', label = '', k
   const regions = resolveRegions(comp, spec).map((r) => {
     const a = regionCrop(comp, r), b = regionCrop(aligned, r);
     const s = scorePair(a, b, r.kind);
-    return { ...r, score: strip(s), verdict: verdictFor(s, r.kind), _a: a, _b: b };
+    return { ...r, score: strip(s), verdict: verdictFor(s, r.kind), inkBox: { comp: inkBox(a), build: inkBox(b) }, _a: a, _b: b };
   });
   const compPalette = dominantColors(comp), buildPalette = dominantColors(aligned);
   return { label, align, whole: strip(whole), regions, aligned, compPalette, buildPalette, _whole: whole };

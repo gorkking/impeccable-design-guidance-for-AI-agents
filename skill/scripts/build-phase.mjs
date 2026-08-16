@@ -68,7 +68,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { decodePng } from './lib/png.mjs';
 const require = createRequire(import.meta.url);
-import { crop } from './lib/raster.mjs';
+import { crop, createImage, blit } from './lib/raster.mjs';
 import { compare, verdictFor } from './comp-diff.mjs';
 import { SPEC_PATH, BUILD_DIR, loadSpec, plateReference } from './comp-spec.mjs';
 
@@ -192,7 +192,22 @@ export function gateSpec(state, { specPath = SPEC_PATH } = {}) {
     return { ok: false, reasons: [`spec measures ${spec.comp}, but this build started on ${state.comp}; re-run comp-spec on the approved comp`] };
   }
   const plates = spec.regions.filter((r) => r.medium === 'raster').length;
-  return { ok: true, reasons: [], summary: `${spec.regions.length} regions, ${plates} plates` };
+  // Type is measured, not guessed: the largest text region must carry a
+  // font-match measurement and a ranked choice before page code exists.
+  // Three of six misses a human called on a first-round build were the
+  // headline face wider and lighter than the comp's, the parts list smaller,
+  // the footer heavier: ratios font-match reads off pixels.
+  const textRegions = spec.regions.filter((r) => r.kind === 'text').sort((a, b) => (b.px.w * b.px.h) - (a.px.w * a.px.h));
+  const reasons = [];
+  if (textRegions.length) {
+    const lead = textRegions[0];
+    if (!lead.type) reasons.push(`the lead text region ${lead.id} has no type measurement: run node ${HERE}/font-match.mjs --measure ${lead.id} (and --rank ${lead.id} --text "<its first words>" to choose the face by metrics). Set font-size from the printed cap height; do not pick a face by name.`);
+    else if (lead.type.comp && !lead.type.chosen) reasons.push(`the lead text region ${lead.id} is measured (${lead.type.widthClass} ${lead.type.weightClass}, cap ${lead.type.comp.capHeightPx}px) but no face is ranked: run node ${HERE}/font-match.mjs --rank ${lead.id} --text "<its first words>" [--candidates "Family:weight,..."] and use the USE line.`);
+    const unmeasured = textRegions.slice(1).filter((r) => !r.type).map((r) => r.id);
+    if (unmeasured.length && !reasons.length) reasons.push(`measure the other text regions too, each sets its own font-size and weight class: node ${HERE}/font-match.mjs --measure <id> for ${unmeasured.join(', ')}`);
+  }
+  if (reasons.length) return { ok: false, reasons };
+  return { ok: true, reasons: [], summary: `${spec.regions.length} regions, ${plates} plates, ${textRegions.length} text regions measured` };
 }
 
 /**
@@ -238,7 +253,19 @@ export function gatePlates(state, { specPath = SPEC_PATH } = {}) {
     let score = null;
     if (comp) {
       const ref = plateReference(comp, spec, r);
-      const res = compare({ comp: ref, build: img, align: 'cover', spec: null, kind: r.kind });
+      // a keyed (alpha) plate ships over the page ground: score it composited
+      // over the region's sampled ground, the way it will show
+      let build = img;
+      let transparent = 0; for (let i = 3; i < img.data.length; i += 4) if (img.data[i] < 128) transparent++;
+      if (transparent > (img.data.length / 4) * 0.05) {
+        const g = (r.palette && r.palette[0] && r.palette[0].hex) || '#ffffff';
+        const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(g);
+        const ground = m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16), 255] : [255, 255, 255, 255];
+        const over = createImage(img.width, img.height, ground);
+        blit(over, img, 0, 0);
+        build = over;
+      }
+      const res = compare({ comp: ref, build, align: 'cover', spec: null, kind: r.kind });
       score = res.whole;
       const v = plateVerdict(r, score);
       for (const reason of v.reasons) reasons.push(`plate ${file}: ${reason}`);
@@ -358,6 +385,15 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   // the mean says; chrome and controls get the one-third allowance.
   const directionContradicted = contradicted.filter((r) => r.kind === 'plate' || r.kind === 'image' || r.kind === 'text');
   for (const r of directionContradicted) reasons.push(`region ${r.id} (${r.kind}) is contradicted (structure ${(r.score.structure * 100).toFixed(0)}%, detail added ${(r.score.detailAdded * 100).toFixed(0)}%): ${r.kind === 'text' ? 'the composition of this text region differs from the comp; re-derive it from the spec box' : 'the plate here does not read as the comp region; regenerate it with the crop as reference (generate-image.mjs --plate ' + r.id + ') and place it at its box'}`);
+  // Controls: report the ink box in comp vs build so a button in a 63px row
+  // built into a 41px row is named as numbers, not as a drift score.
+  for (const r of report.regions) {
+    if (r.kind !== 'control' || r.verdict === 'match') continue;
+    if (r.inkBox && r.inkBox.comp && r.inkBox.build) {
+      const dh = r.inkBox.build.h - r.inkBox.comp.h, dw = r.inkBox.build.w - r.inkBox.comp.w;
+      if (Math.abs(dh) > Math.max(6, r.inkBox.comp.h * 0.15) || Math.abs(dw) > Math.max(12, r.inkBox.comp.w * 0.15)) reasons.push(`region ${r.id}: its ink sits in a ${r.inkBox.comp.w}x${r.inkBox.comp.h}px box in the comp and ${r.inkBox.build.w}x${r.inkBox.build.h}px in the build (padding, row height, or size); match the box, not only the position`);
+    }
+  }
   const otherContradicted = contradicted.filter((r) => !directionContradicted.includes(r));
   if (otherContradicted.length > Math.max(1, Math.floor(report.regions.length / 3))) reasons.push(`${otherContradicted.length} of ${report.regions.length} regions contradicted: ${otherContradicted.map((r) => r.id).join(', ')}`);
   // A CSS-drawn organic contour sitting on a raster region's box is the plate
@@ -502,9 +538,9 @@ export function advance(state, { force = false, reason = null, gateOpts = {} } =
 export function nextInstruction(state) {
   switch (state.phase) {
     case 'comps': return `Comp round for the chosen direction${state.direction ? ` (seed ${state.direction})` : ''}: read reference/visualize.md, generate three compositional comps of the requested surface at its own viewport into ${MOCKS_DIR}/ (each with a prompt sidecar), put them in front of the user, and set "approved": true in the chosen comp's sidecar. Then build-phase.mjs advance. No page code before this closes.`;
-    case 'spec': return `Measure the comp: node comp-spec.mjs --comp ${state.comp} --grid, open ${path.join(BUILD_DIR, 'comp-grid.png')}, write regions.json (every illustration, photo, texture as its own plate region), run comp-spec.mjs --comp ${state.comp} --regions regions.json, then build-phase.mjs advance.`;
-    case 'plates': return 'Produce every plate in the spec (comp-spec.mjs --print lists them). Illustrations, photos, figures: comp-spec.mjs --crop <id>, then generate-image.mjs --plate <id> (or the harness image tool with the crop as reference and the comp-spec plate prompt). Textures (paper, cloth, grain): do not generate first; crop a clean patch of the comp region (comp-spec.mjs --crop <id> --raw, then cut a patch free of ink), mirror-tile it to the plate size, and save it as the plate; generate only when no clean patch exists. The gate scores a texture against its whole region box, so a texture region should be drawn around clean ground (a sample cell), not around the ink it sits under; the page tiles it wherever the material goes. Then build-phase.mjs advance. Write no page code before this passes.';
-    case 'hero': return `Build only the first viewport at ${state.breakpoint || 'the comp size'}, plates first: place every plate at its spec box (comp-spec.mjs --print lists boxes as percentages of the viewport) with object-fit: cover before writing a line of text or a control, capture into ${HERO_REPRO}, and run build-phase.mjs record hero (not advance) once so you see the plate regions read as match before text exists; then lay the semantic layer (text, controls, rules) over the plates from the spec's palette and boxes, capture, advance. When it fails, open the region crops it lists first, in order, then fix; do not build past the hero until it passes.`;
+    case 'spec': return `Measure the comp: node comp-spec.mjs --comp ${state.comp} --grid, open ${path.join(BUILD_DIR, 'comp-grid.png')}, write regions.json (every illustration, photo, texture as its own plate region; every text block its own text region), run comp-spec.mjs --comp ${state.comp} --regions regions.json. Then measure the type: node font-match.mjs --measure <id> for each text region (cap height, width class, weight class) and font-match.mjs --rank <lead text region> --text "<its first words>" to choose the headline face by metrics (the USE line is the CSS). Then build-phase.mjs advance.`;
+    case 'plates': return 'Produce every plate in the spec (comp-spec.mjs --print lists them). Illustrations, photos, figures: comp-spec.mjs --crop <id>, then generate-image.mjs --plate <id> (or the harness image tool with the crop as reference and the comp-spec plate prompt). A line drawing or figure on flat ground is keyed to alpha automatically (PLATE-CHROMA): place it with a plain <img> over the page\'s own ground, never on a second paper. An opaque plate whose ground differs from the page goes in with mix-blend-mode: multiply. Textures (paper, cloth, grain): do not generate first; crop a clean patch of the comp region (comp-spec.mjs --crop <id> --raw, then cut a patch free of ink), mirror-tile it to the plate size, and save it as the plate; generate only when no clean patch exists. The gate scores a texture against its whole region box, so a texture region should be drawn around clean ground (a sample cell), not around the ink it sits under; the page tiles it wherever the material goes. Then build-phase.mjs advance. Write no page code before this passes.';
+    case 'hero': return `Build only the first viewport at ${state.breakpoint || 'the comp size'}. Copy the comp's words verbatim in this phase (headline, labels, table cells, footer): the user approved that comp with those words, and rewriting is a later, stated decision, never a silent one here. Set every text region's font-size from its measured cap height and its face from the ranking. Plates first: place every plate at its spec box (comp-spec.mjs --print lists boxes as percentages of the viewport) with object-fit: cover before writing a line of text or a control, capture into ${HERO_REPRO}, and run build-phase.mjs record hero (not advance) once so you see the plate regions read as match before text exists; then lay the semantic layer (text, controls, rules) over the plates from the spec's palette and boxes, capture, advance. When it fails, open the region crops it lists first, in order, then fix; do not build past the hero until it passes.`;
     case 'sections': return 'Build the remaining sections inside the spec system (same corner language, rules, and palette; nothing the comp does not show). Then build-phase.mjs advance.';
     case 'motion': return 'Add the signature interaction, reveals, and motion. Then build-phase.mjs advance.';
     case 'responsive': return 'Build the other viewports (mobile first if the surface is mobile). The first viewport must hold at common desktop widths (1280 to 1600), not only at the comp\'s exact size: fluid columns, no fixed-px grid that wraps 96px narrower. Settle or disable entrance motion before capturing (an element mid-animation reads as missing). Capture desktop.png (1440 wide, full page) and mobile.png (390 wide, full page) into .impeccable/review/; the gate diffs the top of desktop.png (scaled to the comp\'s width) against the comp. Then build-phase.mjs advance.';
