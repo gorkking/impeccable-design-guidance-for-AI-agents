@@ -68,6 +68,24 @@ Both in both engines (static jsdom + browser bundle), fixtures under `tests/fixt
 - The hero threshold (0.72) and plate threshold (0.5) are calibrated on two runs and synthetic perturbations; they will move with evidence. Both are constants at the top of `build-phase.mjs`.
 - Operate surfaces (dashboards, editors) have few or no plates; the spec/diff still apply, the plates gate is trivially satisfied.
 
-## Evaluating it
+## Evaluating it: first sweep (2026-08-16, gpt-5.6-sol, openai lane)
 
-Execution cuts on the packet-approved niches (`02-kids-reading`, `07-vintage-moto-forum`), old skill (main worktree via `IMPECCABLE_SKILL_DIR`) vs new, scored with `comp-diff.mjs` against the approved comp plus the standard graders. See the PR description for numbers.
+Same niche (07-vintage-moto-forum), same approved comp C, main skill vs this branch, scored with `comp-diff.mjs` against the approved comp. Small numbers, one sample each; read as a smoke, not a verdict.
+
+| Run | Skill | Turns / cost | comp-diff overall | Notes |
+|---|---|---|---|---|
+| exec cut, packet C, "Continue." | main | 9 / $0.88 | **55%** (contradicted; plate + index `missing`) | one 45 KB write, no plates, generic split hero |
+| exec cut, packet C, "Continue." | branch | 17 / $0.95 | **54%** (contradicted; plate `missing`) | the packet's prefix predates the phase machinery; the model never re-read new-work.md and behaved like main |
+| exec cut, packet C, ask names the phased build | branch | 96 / $5.24 (cost cap) | **66%** (drift; plate region 43%) | walked spec → grid → regions → plates → hero gate (72% fail, fix, 77% pass) → sections → motion → responsive; 12 turns lost hunting a screenshot the harness wrote host-side only (fixed in impeccable-evals); the exploded plate was produced (62% vs crop) but the page drew the region in SVG anyway (fixed: hero gate now refuses unreferenced plates) |
+| full journey, comp-led | main | 49 / $3.23 | **56%** (contradicted; two bands `missing`) | dark comp with paper fiche rail; build keeps the section order and flattens the material |
+| full journey, comp-led | branch (before the force/reference fixes) | 61 / $3.04 (turn cap) | **65-66%** (drift) | forced past the plates gate with "single-file delivery" (now refused); hero 44% structure but 83% color, plate placed |
+| exec cut, 01-observability composed checkpoint | main / branch | 9 / $0.68 vs 10 / $0.84 | 52% vs 48% | composed checkpoint quotes the OLD visualize.md verbatim into the prefix, so the branch text never reaches the model; not a test of this change |
+
+What it says so far:
+
+- When the phase machinery actually runs, fidelity moves from the mid-50s to the mid-60s on this comp, and the region rows say why the rest is missing (the exploded plate, the parts table, the CTA treatment). Same model, same comp.
+- Execution-cut packets and composed checkpoints carry the old skill's text in their prefix; a resumed session follows the conversation it is in, not the mounted files. Comparisons of Setup-adjacent skill changes need full journeys or a fresh packet cut on the new skill.
+- Two of the three run-time defects the sweep found were harness (screenshot not visible in the sandbox; packet workspace path) and are fixed in impeccable-evals `paul/packet-niche-execution-preflight`. The third (model forcing a gate, model ignoring its plate) is now refused by the script.
+- Cost: the phased build spends more turns before the first write and more image calls (plates). The 96-turn run is dominated by the screenshot hunt and a font-inlining tangent, not by the gates.
+
+Next: cut fresh packets on the branch skill for 02 and 07, sweep both lanes (openai + anthropic) at n=3, add one Operate niche (11-analytics-dashboard, plates near-empty) and one mobile niche (23-transit-mobile, portrait comp).
