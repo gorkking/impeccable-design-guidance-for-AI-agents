@@ -220,6 +220,34 @@ describe('build-phase state machine (CLI)', () => {
     assert.ok(state.phases.hero.gate.score >= 0.72);
   });
 
+  it('hero gate reports a control whose ink box differs from the comp, and never throws on the report shape', () => {
+    const d4 = fs.mkdtempSync(path.join(os.tmpdir(), 'build-phase-ctrl-'));
+    const comp = makeComp();
+    fs.writeFileSync(path.join(d4, 'comp.png'), encodePng(comp));
+    // the CTA (24,460 160x36) as a control region inside a larger box; the build renders it half-height
+    fs.writeFileSync(path.join(d4, 'regions.json'), JSON.stringify({ allowUncovered: true, regions: [
+      { id: 'masthead', kind: 'chrome', grid: 'A0:J0' },
+      { id: 'cta', kind: 'control', box: { x: 0, y: 0.5, w: 0.5, h: 0.5 } },
+    ] }));
+    run(PHASE_SCRIPT, ['start', '--comp', 'comp.png', '--artifact', 'index.html'], d4);
+    run(SPEC_SCRIPT, ['--comp', 'comp.png', '--regions', 'regions.json'], d4);
+    run(PHASE_SCRIPT, ['advance'], d4);
+    run(PHASE_SCRIPT, ['advance'], d4); // no plates
+    // makeComp is 640x400; the region is its bottom-left quarter (0..320, 200..400) holding
+    // three table rows and the CTA. Shrink the ink there: erase and redraw the rows half-height.
+    const build = { ...comp, data: new Uint8Array(comp.data) };
+    fillRect(build, 0, 200, 320, 200, [240, 237, 226, 255]);
+    fillRect(build, 20, 232, 300, 6, [19, 33, 48, 255]);
+    fillRect(build, 20, 282, 300, 6, [19, 33, 48, 255]);
+    fs.mkdirSync(path.join(d4, '.impeccable', 'review'), { recursive: true });
+    fs.writeFileSync(path.join(d4, '.impeccable', 'review', 'hero-repro.png'), encodePng(build));
+    fs.writeFileSync(path.join(d4, 'index.html'), '<button>x</button>');
+    const res = run(PHASE_SCRIPT, ['advance'], d4);
+    assert.doesNotMatch(res.stdout + res.stderr, /TypeError|errored/);
+    assert.match(res.stdout, /region cta: its ink sits in a/);
+    fs.rmSync(d4, { recursive: true, force: true });
+  });
+
   it('hero gate lists region crops first on failure and refuses a third value-only attempt on the same region', () => {
     // fresh project at hero with a stuck build
     const d3 = fs.mkdtempSync(path.join(os.tmpdir(), 'build-phase-hero-'));

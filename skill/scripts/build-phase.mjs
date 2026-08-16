@@ -412,8 +412,10 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
       // Only when the comp's ink is a discrete element inside its region (a
       // button, a tab), not when it fills the region edge to edge (a control
       // drawn over a plate's edge, a full-width bar): then the box says nothing.
-      const rw = r.box.w * (report.compSize ? parseInt(String(report.compSize).split('x')[0], 10) : 1536);
-      const rh = r.box.h * (report.compSize ? parseInt(String(report.compSize).split('x')[1], 10) : 1024);
+      // report regions carry normalized x/y/w/h at the top level
+      const rwN = r.w ?? (r.box && r.box.w) ?? 1, rhN = r.h ?? (r.box && r.box.h) ?? 1;
+      const rw = rwN * (report.compSize ? parseInt(String(report.compSize).split('x')[0], 10) : 1536);
+      const rh = rhN * (report.compSize ? parseInt(String(report.compSize).split('x')[1], 10) : 1024);
       if (r.inkBox.comp.w >= rw * 0.9 && r.inkBox.comp.h >= rh * 0.9) continue;
       const dh = r.inkBox.build.h - r.inkBox.comp.h, dw = r.inkBox.build.w - r.inkBox.comp.w;
       if (Math.abs(dh) > Math.max(6, r.inkBox.comp.h * 0.15) || Math.abs(dw) > Math.max(12, r.inkBox.comp.w * 0.15)) reasons.push(`region ${r.id}: its ink sits in a ${r.inkBox.comp.w}x${r.inkBox.comp.h}px box in the comp and ${r.inkBox.build.w}x${r.inkBox.build.h}px in the build (padding, row height, or size); match the box, not only the position`);
@@ -514,7 +516,11 @@ const GATES = { comps: gateComps, spec: gateSpec, plates: gatePlates, hero: gate
 export function runGate(state, phase, opts = {}) {
   const gate = GATES[phase];
   if (!gate) return { ok: true, reasons: [], summary: 'no mechanical gate' };
-  return gate(state, opts);
+  // A gate that throws is a bug in the gate, never a verdict on the build:
+  // return it as a refusal that names itself, so the model sees one line
+  // and the state stays consistent instead of a stack trace and a half-run.
+  try { return gate(state, opts); }
+  catch (e) { return { ok: false, reasons: [`gate ${phase} errored (${e.message}); this is a tool bug, not a finding about the page. Re-run with the same inputs; if it repeats, note it and continue with build-phase.mjs advance --force --reason "user: gate ${phase} errored, proceeding" so the run is not lost.`], error: String(e && e.stack || e) }; }
 }
 
 /** Reasons a gate may be forced past. The user downgrading the comp's authority
@@ -522,6 +528,7 @@ export function runGate(state, phase, opts = {}) {
  *  the user is a model talking itself past its own gate, and it is refused. */
 export function forceAllowed(reason) {
   if (typeof reason !== 'string' || reason.trim().length < 20) return false;
+  if (/gate \w+ errored/i.test(reason)) return true;
   const namesUser = /\buser\b|\bthey (said|asked|told|chose|picked)\b|\bpaul\b/i.test(reason);
   // The user must be downgrading the comp itself, not "approving" a
   // translation the model proposed. A reason that keeps the comp's
