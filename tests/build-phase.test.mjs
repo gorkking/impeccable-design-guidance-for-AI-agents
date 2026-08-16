@@ -161,7 +161,7 @@ describe('build-phase state machine (CLI)', () => {
     // type must be measured before spec closes
     res = run(PHASE_SCRIPT, ['advance'], dir);
     assert.equal(res.status, 2, res.stdout);
-    assert.match(res.stdout, /has no type measurement/);
+    assert.match(res.stdout, /measure the type before closing the spec/);
     res = run(FONT_SCRIPT, ['--measure', 'headline'], dir);
     assert.equal(res.status, 0, res.stderr);
     assert.match(res.stdout, /MEASURE headline/);

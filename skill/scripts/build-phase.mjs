@@ -197,10 +197,25 @@ export function gateSpec(state, { specPath = SPEC_PATH } = {}) {
   // Three of six misses a human called on a first-round build were the
   // headline face wider and lighter than the comp's, the parts list smaller,
   // the footer heavier: ratios font-match reads off pixels.
-  const textRegions = spec.regions.filter((r) => r.kind === 'text').sort((a, b) => (b.px.w * b.px.h) - (a.px.w * a.px.h));
+  // The lead text region is the display type: the region whose measured cap
+  // height is largest (a headline), not the biggest box (a table of rows).
+  // Unmeasured regions sort by box height as a proxy until measured.
+  const textRegions = spec.regions.filter((r) => r.kind === 'text').sort((a, b) => {
+    const ca = a.type && a.type.comp ? a.type.comp.capHeightPx : a.px.h * 0.4;
+    const cb = b.type && b.type.comp ? b.type.comp.capHeightPx : b.px.h * 0.4;
+    return cb - ca;
+  });
   const reasons = [];
   if (textRegions.length) {
-    const lead = textRegions[0];
+    // when nothing is measured yet, ask for all measurements first; the lead
+    // is only knowable once cap heights exist
+    const anyMeasured = textRegions.some((r) => r.type);
+    if (!anyMeasured) {
+      reasons.push(`measure the type before closing the spec: node ${HERE}/font-match.mjs --measure <id> for each text region (${textRegions.map((r) => r.id).join(', ')}); the region with the largest cap height is the lead and gets --rank.`);
+      return { ok: false, reasons };
+    }
+    const measurable = textRegions.filter((r) => r.type && r.type.comp);
+    const lead = measurable[0] || textRegions[0];
     if (!lead.type) reasons.push(`the lead text region ${lead.id} has no type measurement: run node ${HERE}/font-match.mjs --measure ${lead.id} (and --rank ${lead.id} --text "<its first words>" to choose the face by metrics). Set font-size from the printed cap height; do not pick a face by name.`);
     else if (lead.type.comp && !lead.type.chosen) reasons.push(`the lead text region ${lead.id} is measured (${lead.type.widthClass} ${lead.type.weightClass}, cap ${lead.type.comp.capHeightPx}px) but no face is ranked: run node ${HERE}/font-match.mjs --rank ${lead.id} --text "<its first words>" [--candidates "Family:weight,..."] and use the USE line.`);
     const unmeasured = textRegions.slice(1).filter((r) => !r.type).map((r) => r.id);
@@ -223,7 +238,11 @@ export function plateVerdict(region, score) {
     if (effective < PLATE_MIN) reasons.push(`scores ${(effective * 100).toFixed(0)}% as the material of region ${region.id} (color ${(score.color * 100).toFixed(0)}%, detail ${(score.detail * 100).toFixed(0)}%); crop a clean patch of the comp region (comp-spec.mjs --crop ${region.id} --raw) and mirror-tile it, generate only when no clean patch exists`);
     return { ok: reasons.length === 0, reasons, effective };
   }
-  if (score.detailAdded > 0.45) reasons.push(`carries detail the comp region ${region.id} does not have (added-detail ${(score.detailAdded * 100).toFixed(0)}% of cells): noise, grain, or a busier subject where the comp is calm; regenerate from the crop reference without adding texture`);
+  // Added detail is invented material only when the comp region is calm;
+  // a paper sleeve is grainy in the comp too, and its plate is allowed the
+  // same grain. Comp energy travels on the region (comp-spec's detail.energy).
+  const compCalm = !region.detail || region.detail.energy < 12;
+  if (compCalm && score.detailAdded > 0.45) reasons.push(`carries detail the comp region ${region.id} does not have (added-detail ${(score.detailAdded * 100).toFixed(0)}% of cells): noise, grain, or a busier subject where the comp is calm; regenerate from the crop reference without adding texture`);
   if (score.structure < PLATE_STRUCTURE_MIN) reasons.push(`structure ${(score.structure * 100).toFixed(0)}% against the comp region ${region.id}: the composition of the plate is not the region's (different subject, orientation, or crop); regenerate with comp-spec.mjs --crop ${region.id} as the reference image`);
   if (score.overall < PLATE_MIN) reasons.push(`scores ${(score.overall * 100).toFixed(0)}% against the comp region ${region.id} (structure ${(score.structure * 100).toFixed(0)}%, color ${(score.color * 100).toFixed(0)}%, detail ${(score.detail * 100).toFixed(0)}%); regenerate with the crop as --ref and the comp-spec plate prompt`);
   return { ok: reasons.length === 0, reasons, effective: score.overall };
@@ -390,6 +409,12 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   for (const r of report.regions) {
     if (r.kind !== 'control' || r.verdict === 'match') continue;
     if (r.inkBox && r.inkBox.comp && r.inkBox.build) {
+      // Only when the comp's ink is a discrete element inside its region (a
+      // button, a tab), not when it fills the region edge to edge (a control
+      // drawn over a plate's edge, a full-width bar): then the box says nothing.
+      const rw = r.box.w * (report.compSize ? parseInt(String(report.compSize).split('x')[0], 10) : 1536);
+      const rh = r.box.h * (report.compSize ? parseInt(String(report.compSize).split('x')[1], 10) : 1024);
+      if (r.inkBox.comp.w >= rw * 0.9 && r.inkBox.comp.h >= rh * 0.9) continue;
       const dh = r.inkBox.build.h - r.inkBox.comp.h, dw = r.inkBox.build.w - r.inkBox.comp.w;
       if (Math.abs(dh) > Math.max(6, r.inkBox.comp.h * 0.15) || Math.abs(dw) > Math.max(12, r.inkBox.comp.w * 0.15)) reasons.push(`region ${r.id}: its ink sits in a ${r.inkBox.comp.w}x${r.inkBox.comp.h}px box in the comp and ${r.inkBox.build.w}x${r.inkBox.build.h}px in the build (padding, row height, or size); match the box, not only the position`);
     }
@@ -469,7 +494,9 @@ export function gateResponsive(state, { specPath = SPEC_PATH, min = RESPONSIVE_M
   const res = spawnSync(process.execPath, args, { encoding: 'utf8' });
   let report;
   try { report = JSON.parse(res.stdout); } catch { return { ok: false, reasons: [`comp-diff failed on ${desktop}: ${res.stderr || res.stdout}`] }; }
-  const missing = report.regions.filter((r) => r.verdict === 'missing');
+  // A texture read at 1440 differs from itself at 1536 by resampling alone;
+  // it passed at the hero and cannot block responsive on its own.
+  const missing = report.regions.filter((r) => r.verdict === 'missing' && r.kind !== 'texture');
   // A plate placed and passed at the hero is not re-litigated at 1440: the
   // rescale alone drops SSIM on a busy region. Text can still contradict
   // (a wrapped headline is a different composition).
@@ -541,7 +568,7 @@ export function nextInstruction(state) {
     case 'spec': return `Measure the comp: node comp-spec.mjs --comp ${state.comp} --grid, open ${path.join(BUILD_DIR, 'comp-grid.png')}, write regions.json (every illustration, photo, texture as its own plate region; every text block its own text region), run comp-spec.mjs --comp ${state.comp} --regions regions.json. Then measure the type: node font-match.mjs --measure <id> for each text region (cap height, width class, weight class) and font-match.mjs --rank <lead text region> --text "<its first words>" to choose the headline face by metrics (the USE line is the CSS). Then build-phase.mjs advance.`;
     case 'plates': return 'Produce every plate in the spec (comp-spec.mjs --print lists them). Illustrations, photos, figures: comp-spec.mjs --crop <id>, then generate-image.mjs --plate <id> (or the harness image tool with the crop as reference and the comp-spec plate prompt). A line drawing or figure on flat ground is keyed to alpha automatically (PLATE-CHROMA): place it with a plain <img> over the page\'s own ground, never on a second paper. An opaque plate whose ground differs from the page goes in with mix-blend-mode: multiply. Textures (paper, cloth, grain): do not generate first; crop a clean patch of the comp region (comp-spec.mjs --crop <id> --raw, then cut a patch free of ink), mirror-tile it to the plate size, and save it as the plate; generate only when no clean patch exists. The gate scores a texture against its whole region box, so a texture region should be drawn around clean ground (a sample cell), not around the ink it sits under; the page tiles it wherever the material goes. Then build-phase.mjs advance. Write no page code before this passes.';
     case 'hero': return `Build only the first viewport at ${state.breakpoint || 'the comp size'}. Copy the comp's words verbatim in this phase (headline, labels, table cells, footer): the user approved that comp with those words, and rewriting is a later, stated decision, never a silent one here. Set every text region's font-size from its measured cap height and its face from the ranking. Plates first: place every plate at its spec box (comp-spec.mjs --print lists boxes as percentages of the viewport) with object-fit: cover before writing a line of text or a control, capture into ${HERO_REPRO}, and run build-phase.mjs record hero (not advance) once so you see the plate regions read as match before text exists; then lay the semantic layer (text, controls, rules) over the plates from the spec's palette and boxes, capture, advance. When it fails, open the region crops it lists first, in order, then fix; do not build past the hero until it passes.`;
-    case 'sections': return 'Build the remaining sections inside the spec system (same corner language, rules, and palette; nothing the comp does not show). Then build-phase.mjs advance.';
+    case 'sections': return 'Build the remaining sections inside the spec system (same corner language, rules, and palette; nothing the comp does not show). The hero passed with the comp\'s words verbatim; from here, content beyond the comp is yours to author at full fidelity, and any change to words the comp showed is a stated decision in your report, never silent. Then build-phase.mjs advance.';
     case 'motion': return 'Add the signature interaction, reveals, and motion. Then build-phase.mjs advance.';
     case 'responsive': return 'Build the other viewports (mobile first if the surface is mobile). The first viewport must hold at common desktop widths (1280 to 1600), not only at the comp\'s exact size: fluid columns, no fixed-px grid that wraps 96px narrower. Settle or disable entrance motion before capturing (an element mid-animation reads as missing). Capture desktop.png (1440 wide, full page) and mobile.png (390 wide, full page) into .impeccable/review/; the gate diffs the top of desktop.png (scaled to the comp\'s width) against the comp. Then build-phase.mjs advance.';
     case 'review': return 'Spawn the finish reviewer with the state file, the hero diff report, and the captures; record its disposition with build-phase.mjs finish --disposition <word>.';
