@@ -14,7 +14,7 @@
  *   responsive the other viewports
  *   review    the finish reviewer ran; disposition recorded
  *
- *   node build-phase.mjs start --comp <approved.png> [--breakpoint 1440x900]
+ *   node build-phase.mjs start --comp <approved.png> [--breakpoint 1440x900] [--artifact index.html]
  *   node build-phase.mjs status                # human-readable, plus NEXT line
  *   node build-phase.mjs status --json
  *   node build-phase.mjs advance               # try to close the current phase; runs its gate
@@ -29,7 +29,9 @@
  *                at least 2x the comp region's pixel size in width, and the
  *                plate scores >= PLATE_MIN against the comp crop (comp-diff,
  *                detail-weighted). A missing or thin plate names itself.
- *   hero      -> .impeccable/review/hero-repro.png exists and comp-diff overall
+ *   hero      -> every plate is referenced by a source file (the artifact
+ *                named at start, else a bounded walk of the project), and
+ *                .impeccable/review/hero-repro.png exists and comp-diff overall
  *                >= HERO_MIN (default 0.72) with no region `missing`. The
  *                score, the report path, and the attempt count are recorded.
  *   sections / motion / responsive -> no mechanical gate; advancing records
@@ -76,13 +78,14 @@ export function saveState(state, statePath = STATE_PATH) {
   fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
 }
 
-export function newState({ comp, breakpoint = null }) {
+export function newState({ comp, breakpoint = null, artifact = null }) {
   return {
     tool: 'build-phase',
     version: 1,
     startedAt: now(),
     comp,
     breakpoint,
+    artifact,
     phase: 'spec',
     phases: Object.fromEntries(PHASES.map((p) => [p, { status: p === 'spec' ? 'open' : 'pending', openedAt: p === 'spec' ? now() : null, closedAt: null, attempts: 0, notes: [], gate: null, forced: null }])),
     finish: null,
@@ -136,8 +139,50 @@ export function gatePlates(state, { specPath = SPEC_PATH } = {}) {
   return { ok: reasons.length === 0, reasons, summary: `${plates.filter((p) => p.status === 'ok').length}/${rasterRegions.length} plates`, plates };
 }
 
-export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, min = HERO_MIN, outDir = path.join('.impeccable', 'review', 'diff', 'hero') } = {}) {
+/** Source files that could reference a plate: bounded walk, skipping deps and build output. */
+function sourceFiles(root = '.', limit = 400) {
+  const out = [];
+  const skip = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.next', '.svelte-kit', '.impeccable', 'assets', 'coverage']);
+  const exts = /\.(html?|css|scss|jsx?|tsx?|svelte|vue|astro|mdx?|php|erb|hbs)$/i;
+  const walk = (dir, depth) => {
+    if (out.length >= limit || depth > 6) return;
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (out.length >= limit) return;
+      if (e.isDirectory()) { if (!skip.has(e.name) && !e.name.startsWith('.')) walk(path.join(dir, e.name), depth + 1); }
+      else if (exts.test(e.name)) out.push(path.join(dir, e.name));
+    }
+  };
+  walk(root, 0);
+  return out;
+}
+
+/** Plates the artifact never references: a plate on disk that no source names ships nothing. */
+export function unreferencedPlates(spec, artifact = null) {
+  const plates = (spec?.regions || []).filter((r) => r.medium === 'raster' && r.plate);
+  if (!plates.length) return [];
+  const files = artifact && fs.existsSync(artifact) ? [artifact] : sourceFiles();
+  let corpus = '';
+  for (const f of files) { try { corpus += fs.readFileSync(f, 'utf8') + '\n'; } catch { /* skip */ } }
+  const missing = [];
+  for (const r of plates) {
+    const base = path.basename(r.plate);
+    const stem = base.replace(/\.[a-z0-9]+$/i, '');
+    // a data URI inline copy counts when the region id or file stem is named beside it
+    if (corpus.includes(base) || (corpus.includes('data:image/') && (corpus.includes(stem) || corpus.includes(r.id)))) continue;
+    missing.push(r);
+  }
+  return missing;
+}
+
+export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, min = HERO_MIN, outDir = path.join('.impeccable', 'review', 'diff', 'hero'), artifact = null } = {}) {
   if (!fs.existsSync(buildPath)) return { ok: false, reasons: [`no hero capture at ${buildPath}: screenshot the first viewport at the comp's own dimensions (${state.breakpoint || 'comp size'}) into that path`] };
+  const specForRefs = loadSpec(specPath);
+  const unreferenced = unreferencedPlates(specForRefs, artifact || state.artifact || null);
+  if (unreferenced.length) {
+    return { ok: false, reasons: unreferenced.map((r) => `plate ${r.plate} (region ${r.id}) is not referenced by any source file: the page draws that region in code while the produced plate sits unused. Place the plate (an <img>, a background-image, or an inlined data URI named for it) and recapture.`) };
+  }
   const script = path.join(HERE, 'comp-diff.mjs');
   const args = [script, '--comp', state.comp, '--build', buildPath, '--out-dir', outDir, '--label', 'hero', '--json'];
   const spec = loadSpec(specPath);
@@ -248,7 +293,7 @@ async function main() {
       console.log(renderStatus(existing));
       return;
     }
-    const state = newState({ comp, breakpoint });
+    const state = newState({ comp, breakpoint, artifact: arg('artifact') });
     saveState(state);
     console.log(renderStatus(state));
     return;
@@ -283,6 +328,7 @@ async function main() {
     const gateOpts = {};
     if (arg('build')) gateOpts.buildPath = arg('build');
     if (arg('min')) gateOpts.min = parseFloat(arg('min'));
+    if (arg('artifact')) gateOpts.artifact = arg('artifact');
     const res = advance(state, { force: flag('force'), reason: arg('reason'), gateOpts });
     saveState(state);
     if (!res.ok) {

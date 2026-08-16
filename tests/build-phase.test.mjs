@@ -131,7 +131,12 @@ describe('build-phase state machine (CLI)', () => {
     fillRect(flat, 0, 0, comp.width, 40, [19, 33, 48, 255]);
     fs.mkdirSync(path.join(dir, '.impeccable', 'review'), { recursive: true });
     fs.writeFileSync(path.join(dir, '.impeccable', 'review', 'hero-repro.png'), encodePng(flat));
+    // no source references the plate yet: refused before any diff runs
     let res = run(PHASE_SCRIPT, ['advance'], dir);
+    assert.equal(res.status, 2, res.stdout);
+    assert.match(res.stdout, /not referenced by any source file/);
+    fs.writeFileSync(path.join(dir, 'index.html'), '<img src="assets/plates/art.png" alt="">');
+    res = run(PHASE_SCRIPT, ['advance'], dir);
     assert.equal(res.status, 2, res.stdout);
     assert.match(res.stdout, /GATE HERO FAILED/);
     assert.match(res.stdout, /region art is missing/);
@@ -144,7 +149,7 @@ describe('build-phase state machine (CLI)', () => {
     assert.equal(res.status, 0, res.stdout);
     assert.match(res.stdout, /ADVANCED hero -> sections/);
     const state = JSON.parse(fs.readFileSync(path.join(dir, '.impeccable', 'build', 'state.json'), 'utf8'));
-    assert.equal(state.phases.hero.attempts, 2);
+    assert.equal(state.phases.hero.attempts, 3);
     assert.ok(state.phases.hero.gate.score >= 0.72);
   });
 
