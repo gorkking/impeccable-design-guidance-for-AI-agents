@@ -335,7 +335,23 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   }
   if (report.overall < min) reasons.push(`hero overall ${(report.overall * 100).toFixed(0)}% < ${(min * 100).toFixed(0)}% (structure ${(report.scores.structure * 100).toFixed(0)}%, color ${(report.scores.color * 100).toFixed(0)}%, detail ${(report.scores.detail * 100).toFixed(0)}%)`);
   if (report.scores.colorIntersection != null && report.scores.colorIntersection < 0.2) reasons.push(`the palette is not the comp's (color intersection ${(report.scores.colorIntersection * 100).toFixed(0)}%): comp ${(report.palette.comp || []).slice(0, 3).map((c) => c.hex).join(' ')} vs build ${(report.palette.build || []).slice(0, 3).map((c) => c.hex).join(' ')}. Use the spec's sampled palette values, not a rendition of them.`);
-  const missing = report.regions.filter((r) => r.verdict === 'missing');
+  // A texture band that shares its box with a text/control region carries
+  // that region's ink in the comp crop; when the overlapping ink regions are
+  // present in the build, a low detail score on the texture is the ink
+  // metric measuring the wrong thing, not missing material.
+  const specRegions = specForRefs ? specForRefs.regions : [];
+  const overlaps = (a, b) => a.box.x < b.box.x + b.box.w && b.box.x < a.box.x + a.box.w && a.box.y < b.box.y + b.box.h && b.box.y < a.box.y + a.box.h;
+  const verdictOf = Object.fromEntries(report.regions.map((r) => [r.id, r.verdict]));
+  const missing = report.regions.filter((r) => {
+    if (r.verdict !== 'missing') return false;
+    if (r.kind !== 'texture') return true;
+    const me = specRegions.find((x) => x.id === r.id);
+    if (!me) return true;
+    const inkOver = specRegions.filter((x) => x.id !== r.id && (x.kind === 'text' || x.kind === 'control' || x.kind === 'chrome') && overlaps(me, x));
+    const inkPresent = inkOver.length > 0 && inkOver.every((x) => verdictOf[x.id] && verdictOf[x.id] !== 'missing');
+    if (inkPresent) { r.verdict = 'drift'; return false; }
+    return true;
+  });
   for (const r of missing) reasons.push(`region ${r.id} is missing (detail ${(r.score.detail * 100).toFixed(0)}%, structure ${(r.score.structure * 100).toFixed(0)}%): the comp shows material the build does not`);
   const contradicted = report.regions.filter((r) => r.verdict === 'contradicted');
   // A contradicted plate, image, or text region is the wrong page whatever
@@ -422,7 +438,7 @@ export function gateResponsive(state, { specPath = SPEC_PATH, min = RESPONSIVE_M
   // rescale alone drops SSIM on a busy region. Text can still contradict
   // (a wrapped headline is a different composition).
   const contradictedDirection = report.regions.filter((r) => r.verdict === 'contradicted' && r.kind === 'text');
-  if (report.overall < min) reasons.push(`the desktop capture (${report.buildSize}) scores ${(report.overall * 100).toFixed(0)}% against the comp, under ${(min * 100).toFixed(0)}%: the first viewport does not survive a common desktop width. The hero passed at ${state.breakpoint || 'the comp size'}; the layout must hold from ~1280 up, not only at the comp's exact width (grid columns in fr / minmax, not fixed px that overflow and wrap).`);
+  if (report.overall < min) reasons.push(`the desktop capture (${report.buildSize}; the top ${report.compSize} rows scaled to the comp's width are compared, a full-page capture is fine) scores ${(report.overall * 100).toFixed(0)}% against the comp, under ${(min * 100).toFixed(0)}%: the first viewport does not survive a common desktop width. The hero passed at ${state.breakpoint || 'the comp size'}; the layout must hold from ~1280 up, not only at the comp's exact width (grid columns in fr / minmax, not fixed px that overflow and wrap).`);
   for (const r of missing) reasons.push(`at desktop width, region ${r.id} is missing`);
   for (const r of contradictedDirection) reasons.push(`at desktop width, region ${r.id} (${r.kind}) is contradicted (structure ${(r.score.structure * 100).toFixed(0)}%)`);
   return { ok: reasons.length === 0, reasons, summary: `desktop ${(report.overall * 100).toFixed(0)}% (${report.verdict})`, score: report.overall, sideBySide: report.files ? report.files.sideBySide : null };
@@ -487,11 +503,11 @@ export function nextInstruction(state) {
   switch (state.phase) {
     case 'comps': return `Comp round for the chosen direction${state.direction ? ` (seed ${state.direction})` : ''}: read reference/visualize.md, generate three compositional comps of the requested surface at its own viewport into ${MOCKS_DIR}/ (each with a prompt sidecar), put them in front of the user, and set "approved": true in the chosen comp's sidecar. Then build-phase.mjs advance. No page code before this closes.`;
     case 'spec': return `Measure the comp: node comp-spec.mjs --comp ${state.comp} --grid, open ${path.join(BUILD_DIR, 'comp-grid.png')}, write regions.json (every illustration, photo, texture as its own plate region), run comp-spec.mjs --comp ${state.comp} --regions regions.json, then build-phase.mjs advance.`;
-    case 'plates': return 'Produce every plate in the spec (comp-spec.mjs --print lists them). Illustrations, photos, figures: comp-spec.mjs --crop <id>, then generate-image.mjs --plate <id> (or the harness image tool with the crop as reference and the comp-spec plate prompt). Textures (paper, cloth, grain): do not generate first; crop a clean patch of the comp region (comp-spec.mjs --crop <id> --raw, then cut a patch free of ink), mirror-tile it to the plate size, and save it as the plate; generate only when no clean patch exists. Then build-phase.mjs advance. Write no page code before this passes.';
+    case 'plates': return 'Produce every plate in the spec (comp-spec.mjs --print lists them). Illustrations, photos, figures: comp-spec.mjs --crop <id>, then generate-image.mjs --plate <id> (or the harness image tool with the crop as reference and the comp-spec plate prompt). Textures (paper, cloth, grain): do not generate first; crop a clean patch of the comp region (comp-spec.mjs --crop <id> --raw, then cut a patch free of ink), mirror-tile it to the plate size, and save it as the plate; generate only when no clean patch exists. The gate scores a texture against its whole region box, so a texture region should be drawn around clean ground (a sample cell), not around the ink it sits under; the page tiles it wherever the material goes. Then build-phase.mjs advance. Write no page code before this passes.';
     case 'hero': return `Build only the first viewport at ${state.breakpoint || 'the comp size'}, plates first: place every plate at its spec box (comp-spec.mjs --print lists boxes as percentages of the viewport) with object-fit: cover before writing a line of text or a control, capture into ${HERO_REPRO}, and run build-phase.mjs record hero (not advance) once so you see the plate regions read as match before text exists; then lay the semantic layer (text, controls, rules) over the plates from the spec's palette and boxes, capture, advance. When it fails, open the region crops it lists first, in order, then fix; do not build past the hero until it passes.`;
     case 'sections': return 'Build the remaining sections inside the spec system (same corner language, rules, and palette; nothing the comp does not show). Then build-phase.mjs advance.';
     case 'motion': return 'Add the signature interaction, reveals, and motion. Then build-phase.mjs advance.';
-    case 'responsive': return 'Build the other viewports (mobile first if the surface is mobile). The first viewport must hold at common desktop widths (1280 to 1600), not only at the comp\'s exact size: fluid columns, no fixed-px grid that wraps 96px narrower. Capture desktop.png (1440 wide, full page) and mobile.png (390 wide, full page) into .impeccable/review/; the gate diffs desktop.png against the comp. Then build-phase.mjs advance.';
+    case 'responsive': return 'Build the other viewports (mobile first if the surface is mobile). The first viewport must hold at common desktop widths (1280 to 1600), not only at the comp\'s exact size: fluid columns, no fixed-px grid that wraps 96px narrower. Settle or disable entrance motion before capturing (an element mid-animation reads as missing). Capture desktop.png (1440 wide, full page) and mobile.png (390 wide, full page) into .impeccable/review/; the gate diffs the top of desktop.png (scaled to the comp\'s width) against the comp. Then build-phase.mjs advance.';
     case 'review': return 'Spawn the finish reviewer with the state file, the hero diff report, and the captures; record its disposition with build-phase.mjs finish --disposition <word>.';
     default: return '';
   }
@@ -570,7 +586,9 @@ async function main() {
     const which = process.argv[3];
     if (which !== 'hero') { console.error('build-phase: record hero --build <png>'); process.exit(1); }
     const gate = gateHero(state, { buildPath: arg('build', HERO_REPRO), min: arg('min') ? parseFloat(arg('min')) : HERO_MIN });
-    if (state.phases.hero.status !== 'closed') state.phases.hero.attempts += 1;
+    // record is a look, not an attempt: the plates-only capture is expected
+    // to fail on every text region, and counting it muddied the tally.
+    state.phases.hero.records = (state.phases.hero.records || 0) + 1;
     state.phases.hero.gate = { ...gate, at: now() };
     saveState(state);
     // record is the look, advance is the gate: on the plates-only capture,

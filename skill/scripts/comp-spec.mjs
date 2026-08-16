@@ -301,6 +301,7 @@ async function main() {
     console.log('NEXT open the grid image, then write regions.json in exactly this shape and run --regions regions.json:');
     console.log('  { "regions": [ { "id": "exploded-plate", "kind": "plate", "grid": "E0:H4", "note": "exploded carburetor drawing" }, { "id": "masthead", "kind": "chrome", "grid": "A0:J0", "note": "navy bar" } ] }');
     console.log('  kind: plate | image | texture (painted material: every illustration, photograph, figure, product object, texture; each ships as a raster plate) or text | control | chrome (code draws it). grid: <colrow>:<colrow>, A0 top-left to J9 bottom-right, inclusive.');
+    console.log('  A texture region is a clean sample cell of the material (ground with no ink on it), not the whole band it covers; the page tiles it. Ink that sits on the material gets its own text/control region.');
     return;
   }
 
