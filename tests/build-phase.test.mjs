@@ -107,12 +107,16 @@ describe('build-phase state machine (CLI)', () => {
     let res = run(PHASE_SCRIPT, ['advance'], dir);
     assert.equal(res.status, 2);
     assert.match(res.stdout, /plate missing for art/);
+    // force without the user's words is refused; with them it is recorded
+    res = run(PHASE_SCRIPT, ['advance', '--force', '--reason', 'single-file HTML delivery requires embedded CSS'], dir);
+    assert.equal(res.status, 2);
+    assert.match(res.stdout, /--force refused/);
     // comp-size crop: too small
     res = run(SPEC_SCRIPT, ['--crop', 'art', '--out', 'assets/plates/art.png'], dir);
     assert.equal(res.status, 0, res.stderr);
     res = run(PHASE_SCRIPT, ['advance'], dir);
     assert.equal(res.status, 2);
-    assert.match(res.stdout, /needs at least 1.5x/);
+    assert.match(res.stdout, /needs at least 480px/);
     // 2x crop passes size and similarity
     res = run(SPEC_SCRIPT, ['--crop', 'art', '--scale', '2', '--out', 'assets/plates/art.png'], dir);
     assert.equal(res.status, 0, res.stderr);
@@ -150,8 +154,8 @@ describe('build-phase state machine (CLI)', () => {
       assert.equal(res.status, 0, res.stdout);
       assert.match(res.stdout, new RegExp(`ADVANCED ${from}`));
     }
-    let res = run(PHASE_SCRIPT, ['advance', '--force', '--reason', 'test'], dir);
-    assert.equal(res.status, 0);
+    let res = run(PHASE_SCRIPT, ['advance', '--force', '--reason', 'single-file delivery needs CSS'], dir);
+    assert.equal(res.status, 0, 'responsive has no gate, so force is moot');
     res = run(PHASE_SCRIPT, ['finish', '--disposition', 'fix'], dir);
     assert.equal(res.status, 0);
     assert.match(res.stdout, /finish      fix/);

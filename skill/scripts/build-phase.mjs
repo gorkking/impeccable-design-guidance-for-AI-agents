@@ -115,14 +115,21 @@ export function gatePlates(state, { specPath = SPEC_PATH } = {}) {
     if (!file || !fs.existsSync(file)) { reasons.push(`plate missing for ${r.id}: expected ${file || '(no path)'}; produce it from comp-spec.mjs --crop ${r.id} with generate-image.mjs --plate`); plates.push({ id: r.id, file, status: 'missing' }); continue; }
     let img;
     try { img = decodePng(fs.readFileSync(file)); } catch (e) { reasons.push(`plate ${file} is not a decodable PNG: ${e.message}`); plates.push({ id: r.id, file, status: 'unreadable' }); continue; }
-    const minW = r.px.w * 1.5;
-    if (img.width < minW) reasons.push(`plate ${file} is ${img.width}px wide; the comp region is ${r.px.w}px and a shipping plate needs at least 1.5x (${Math.round(minW)}px). Regenerate at asset size, do not crop the comp.`);
+    // A texture tiles, so it owes no size floor and no structural match:
+    // it is judged on palette and grain only. Every other plate must be at
+    // least 1.5x the region (capped at 1536px, the largest size the
+    // generators emit; past that the region is a full-bleed field the page
+    // scales) and read as the region under object-fit: cover.
+    const isTexture = r.kind === 'texture';
+    const minW = Math.min(1536, r.px.w * 1.5);
+    if (!isTexture && img.width < minW) reasons.push(`plate ${file} is ${img.width}px wide; the comp region is ${r.px.w}px and a shipping plate needs at least ${Math.round(minW)}px. Regenerate at asset size, do not crop the comp.`);
     let score = null;
     if (comp) {
       const ref = crop(comp, r.px.x, r.px.y, r.px.w, r.px.h);
       const res = compare({ comp: ref, build: img, align: 'cover', spec: null, kind: r.kind });
       score = res.whole;
-      if (score.overall < PLATE_MIN) reasons.push(`plate ${file} scores ${(score.overall * 100).toFixed(0)}% against the comp region ${r.id} (structure ${(score.structure * 100).toFixed(0)}%, color ${(score.color * 100).toFixed(0)}%, detail ${(score.detail * 100).toFixed(0)}%); it does not read as the same region. Regenerate with the crop as --ref and the comp-spec plate prompt.`);
+      const effective = isTexture ? 0.5 * score.color + 0.5 * Math.min(1, score.detail / 0.6) : score.overall;
+      if (effective < PLATE_MIN) reasons.push(`plate ${file} scores ${(effective * 100).toFixed(0)}% against the comp region ${r.id} (structure ${(score.structure * 100).toFixed(0)}%, color ${(score.color * 100).toFixed(0)}%, detail ${(score.detail * 100).toFixed(0)}%); it does not read as the same ${isTexture ? 'material' : 'region'}. Regenerate with the crop as --ref and the comp-spec plate prompt${isTexture ? ', or crop a clean patch of the comp region and tile it' : ''}.`);
     }
     plates.push({ id: r.id, file, status: 'ok', size: `${img.width}x${img.height}`, score: score ? score.overall : null });
   }
@@ -167,6 +174,13 @@ export function runGate(state, phase, opts = {}) {
   return gate(state, opts);
 }
 
+/** Reasons a gate may be forced past. The user downgrading the comp's authority
+ *  in words is the only one; the parent quotes it. A reason that does not name
+ *  the user is a model talking itself past its own gate, and it is refused. */
+export function forceAllowed(reason) {
+  return typeof reason === 'string' && /\buser\b|\bthey (said|asked|told)\b|\bpaul\b/i.test(reason) && reason.trim().length > 20;
+}
+
 export function advance(state, { force = false, reason = null, gateOpts = {} } = {}) {
   const phase = state.phase;
   const idx = PHASES.indexOf(phase);
@@ -176,8 +190,12 @@ export function advance(state, { force = false, reason = null, gateOpts = {} } =
   const gate = runGate(state, phase, gateOpts);
   const { plates: _p, ...gateRecord } = gate;
   p.gate = { ...gateRecord, at: now() };
+  if (!gate.ok && force && !forceAllowed(reason)) {
+    p.status = 'open';
+    return { ok: false, phase, reasons: [...gate.reasons, `--force refused: "${reason || ''}" does not quote the user downgrading the comp. A single-file deliverable, a missing tool, or difficulty is not a reason; embed the plate as a data URI, produce it with the harness image tool, or ask the user.`], gate };
+  }
   if (!gate.ok && !force) { p.status = 'open'; return { ok: false, phase, reasons: gate.reasons, gate }; }
-  if (!gate.ok && force) p.forced = { at: now(), reason: reason || '(no reason given)', reasons: gate.reasons };
+  if (!gate.ok && force) p.forced = { at: now(), reason, reasons: gate.reasons };
   p.status = 'closed'; p.closedAt = now();
   const next = PHASES[idx + 1];
   state.phase = next;
