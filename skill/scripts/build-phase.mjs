@@ -531,7 +531,7 @@ async function main() {
       if (res.gate && res.gate.worstCrops && res.gate.worstCrops.length) {
         console.log('  LOOK FIRST, in this order, before editing anything (comp on the left, your build on the right):');
         for (const c of res.gate.worstCrops) console.log(`    ${c.file}   ${c.id}: ${c.verdict} ${(c.score.overall * 100).toFixed(0)}% (structure ${(c.score.structure * 100).toFixed(0)}%, color ${(c.score.color * 100).toFixed(0)}%, detail ${(c.score.detail * 100).toFixed(0)}%)`);
-        console.log('  A region scored missing needs its material (a plate placed, or produced), not a value change; contradicted needs its structure re-derived from the spec box; drift is where padding and size edits belong.');
+        console.log('  A region scored missing needs its material (a plate placed, or produced), not a value change; contradicted needs its structure re-derived from the spec box; drift is where padding and size edits belong. When a thin chrome strip (masthead, breadcrumb, table header) is the worst region, check its box height in the spec against the comp first: a strip one grid row tall in the spec but 53px in the comp compares your build against ground it never had.');
       }
       for (const r of res.reasons) console.log(`  - ${r}`);
       if (res.gate && res.gate.sideBySide) console.log(`  then ${res.gate.sideBySide} for the whole viewport`);
@@ -554,5 +554,10 @@ async function main() {
   process.exit(1);
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+// realpath on both sides: a skill mounted through a symlink (Cursor, a
+// worktree, an eval stage) must still run as a CLI.
+const isMain = (() => {
+  try { return !!process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return !!process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname); }
+})();
 if (isMain) main();

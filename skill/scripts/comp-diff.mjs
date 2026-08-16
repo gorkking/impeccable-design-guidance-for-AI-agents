@@ -39,6 +39,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { decodePng, encodePng } from './lib/png.mjs';
 import { crop, resize, fit, blit, createImage, fillRect, strokeRect, drawLabel } from './lib/raster.mjs';
 import { structureScore, colorScore, detailScore, diffMap, horizontalBands, bandScore, dominantColors, toGray, blurGray, ssimShifted } from './lib/image-metrics.mjs';
@@ -139,6 +140,16 @@ export function verdictFor(s, kind = null) {
   // the weighted mean says; painted regions with invented detail likewise.
   if (s.structure < 0.3) return 'contradicted';
   if (painted && (s.structure < 0.45 || s.detailAdded > 0.4)) return 'contradicted';
+  // Text is set in a substitute face at a slightly different metric almost
+  // always, and blurred SSIM reads glyph shape; a text region with its
+  // structure above the swap floor and its palette intact is drift at worst.
+  // Chasing it past that point is what burned eight to thirteen hero attempts
+  // per build in the first simulated round.
+  if (kind === 'text' && s.color >= 0.5) return s.overall >= 0.8 ? 'match' : 'drift';
+  // Chrome and controls are thin strips whose "detail" is mostly ground grain
+  // (a paper texture the build renders flatter, a scanline). When their
+  // structure and palette hold, low detail is drift, not contradiction.
+  if ((kind === 'chrome' || kind === 'control') && s.structure >= 0.5 && s.color >= 0.5) return s.overall >= 0.8 ? 'match' : 'drift';
   if (s.overall >= 0.8) return 'match';
   if (s.overall >= 0.6) return 'drift';
   return 'contradicted';
@@ -333,5 +344,10 @@ async function main() {
   }
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+// realpath on both sides: a skill mounted through a symlink (Cursor, a
+// worktree, an eval stage) must still run as a CLI.
+const isMain = (() => {
+  try { return !!process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return !!process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname); }
+})();
 if (isMain) main();
