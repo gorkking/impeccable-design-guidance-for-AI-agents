@@ -183,6 +183,16 @@ export function loadSpec(specPath = SPEC_PATH) {
 
 async function main() {
   const specPath = arg('spec', SPEC_PATH);
+  if (flag('help') || process.argv.length <= 2) {
+    console.log(`usage: comp-spec.mjs --comp <png> --grid            write .impeccable/build/comp-grid.png (10x10 labeled grid) + palette + bands
+       comp-spec.mjs --comp <png> --regions <json>  measure regions -> .impeccable/build/spec.json
+         regions json: { "regions": [ { "id": "art", "kind": "plate|image|texture|text|control|chrome", "grid": "E0:J4", "note": "..." } ] }
+       comp-spec.mjs --comp <png> --auto            band regions when you have no regions file
+       comp-spec.mjs --print                        the compact spec
+       comp-spec.mjs --crop <id> [--out f] [--scale n]   reference crop of a region (never a shipping asset)
+       comp-spec.mjs --plate-prompt <id>            the regeneration prompt for a raster region`);
+    return;
+  }
   if (flag('print')) {
     const spec = loadSpec(specPath);
     if (!spec) { console.error(`comp-spec: no spec at ${specPath}; run with --comp <png> --regions <json> first`); process.exit(1); }
@@ -227,7 +237,9 @@ async function main() {
     console.log(`GRID ${GRID_PATH} (${comp.width}x${comp.height} comp; cells A0 top-left to J9 bottom-right)`);
     console.log(`PALETTE ${paletteOf(comp).map((c) => `${c.hex}(${Math.round(c.coverage * 100)}%)`).join(' ')}`);
     console.log(`BANDS ${horizontalBands(comp).filter((b) => b.strength > 0.2).map((b) => `${Math.round(b.y * 100)}%`).join(' ') || 'none'}`);
-    console.log('NEXT open the grid image, then write regions.json naming every salient region by grid span (e.g. "E0:J4") with kind plate|image|texture|text|control|chrome and a one-line note, and run --regions regions.json. Name every illustration, photo, and texture as its own region: those become plates.');
+    console.log('NEXT open the grid image, then write regions.json in exactly this shape and run --regions regions.json:');
+    console.log('  { "regions": [ { "id": "exploded-plate", "kind": "plate", "grid": "E0:H4", "note": "exploded carburetor drawing" }, { "id": "masthead", "kind": "chrome", "grid": "A0:J0", "note": "navy bar" } ] }');
+    console.log('  kind: plate | image | texture (painted material: every illustration, photograph, figure, product object, texture; each ships as a raster plate) or text | control | chrome (code draws it). grid: <colrow>:<colrow>, A0 top-left to J9 bottom-right, inclusive.');
     return;
   }
 
