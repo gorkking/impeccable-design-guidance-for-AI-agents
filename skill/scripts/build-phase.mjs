@@ -48,8 +48,12 @@
  *                .impeccable/review/hero-repro.png exists and comp-diff overall
  *                >= HERO_MIN (default 0.72) with no region `missing`. The
  *                score, the report path, and the attempt count are recorded.
- *   sections / motion / responsive -> no mechanical gate; advancing records
- *                the moment, and the finish reviewer reads the timeline.
+ *   responsive -> .impeccable/review/desktop.png and mobile.png exist, and
+ *                the desktop capture still scores >= RESPONSIVE_MIN against
+ *                the comp with no region missing: a first viewport that only
+ *                holds at the comp's exact width is not built.
+ *   sections / motion -> no mechanical gate; advancing records the moment,
+ *                and the finish reviewer reads the timeline.
  *
  * Exit codes: 0 ok / advanced, 2 gate failed (state unchanged, reasons
  * printed), 1 usage.
@@ -73,6 +77,7 @@ export const STATE_PATH = path.join(BUILD_DIR, 'state.json');
 export const PHASES = ['comps', 'spec', 'plates', 'hero', 'sections', 'motion', 'responsive', 'review'];
 export const MOCKS_DIR = path.join('.impeccable', 'mocks');
 export const HERO_MIN = 0.72;
+export const RESPONSIVE_MIN = 0.65;
 export const PLATE_MIN = 0.4;
 export const PLATE_STRUCTURE_MIN = 0.4;
 export const HERO_REPRO = path.join('.impeccable', 'review', 'hero-repro.png');
@@ -376,7 +381,34 @@ function hashFile(file) {
   } catch { return null; }
 }
 
-const GATES = { comps: gateComps, spec: gateSpec, plates: gatePlates, hero: gateHero };
+/**
+ * Responsive gate: the desktop capture (whatever common width the build
+ * used, 1440 typically) must still read as the comp. A first viewport that
+ * only holds at the comp's exact width and collapses to one column 96px
+ * narrower passed every earlier gate in the first simulated round.
+ */
+export function gateResponsive(state, { specPath = SPEC_PATH, min = RESPONSIVE_MIN, outDir = path.join('.impeccable', 'review', 'diff', 'desktop') } = {}) {
+  const desktop = path.join('.impeccable', 'review', 'desktop.png');
+  const mobile = path.join('.impeccable', 'review', 'mobile.png');
+  const reasons = [];
+  if (!fs.existsSync(desktop)) reasons.push(`no ${desktop}: capture the page at a common desktop width (1440 wide, full page) into that path`);
+  if (!fs.existsSync(mobile)) reasons.push(`no ${mobile}: capture the page at 390 wide, full page, into that path`);
+  if (reasons.length) return { ok: false, reasons };
+  const script = path.join(HERE, 'comp-diff.mjs');
+  const args = [script, '--comp', state.comp, '--build', desktop, '--out-dir', outDir, '--label', 'desktop', '--json'];
+  if (loadSpec(specPath)) args.push('--spec', specPath);
+  const res = spawnSync(process.execPath, args, { encoding: 'utf8' });
+  let report;
+  try { report = JSON.parse(res.stdout); } catch { return { ok: false, reasons: [`comp-diff failed on ${desktop}: ${res.stderr || res.stdout}`] }; }
+  const missing = report.regions.filter((r) => r.verdict === 'missing');
+  const contradictedDirection = report.regions.filter((r) => r.verdict === 'contradicted' && (r.kind === 'plate' || r.kind === 'image' || r.kind === 'text'));
+  if (report.overall < min) reasons.push(`the desktop capture (${report.buildSize}) scores ${(report.overall * 100).toFixed(0)}% against the comp, under ${(min * 100).toFixed(0)}%: the first viewport does not survive a common desktop width. The hero passed at ${state.breakpoint || 'the comp size'}; the layout must hold from ~1280 up, not only at the comp's exact width (grid columns in fr / minmax, not fixed px that overflow and wrap).`);
+  for (const r of missing) reasons.push(`at desktop width, region ${r.id} is missing`);
+  for (const r of contradictedDirection) reasons.push(`at desktop width, region ${r.id} (${r.kind}) is contradicted (structure ${(r.score.structure * 100).toFixed(0)}%)`);
+  return { ok: reasons.length === 0, reasons, summary: `desktop ${(report.overall * 100).toFixed(0)}% (${report.verdict})`, score: report.overall, sideBySide: report.files ? report.files.sideBySide : null };
+}
+
+const GATES = { comps: gateComps, spec: gateSpec, plates: gatePlates, hero: gateHero, responsive: gateResponsive };
 
 // ---- transitions -----------------------------------------------------------
 
@@ -431,7 +463,7 @@ export function nextInstruction(state) {
     case 'hero': return `Build only the first viewport at ${state.breakpoint || 'the comp size'}, plates first: place every plate at its spec box (comp-spec.mjs --print lists boxes as percentages of the viewport) with object-fit: cover before writing a line of text or a control, capture into ${HERO_REPRO}, and advance once so the gate reads the material; then lay the semantic layer (text, controls, rules) over the plates from the spec's palette and boxes, capture, advance. When it fails, open the region crops it lists first, in order, then fix; do not build past the hero until it passes.`;
     case 'sections': return 'Build the remaining sections inside the spec system (same corner language, rules, and palette; nothing the comp does not show). Then build-phase.mjs advance.';
     case 'motion': return 'Add the signature interaction, reveals, and motion. Then build-phase.mjs advance.';
-    case 'responsive': return 'Build the other viewports (mobile first if the surface is mobile). Capture desktop.png and mobile.png into .impeccable/review/. Then build-phase.mjs advance.';
+    case 'responsive': return 'Build the other viewports (mobile first if the surface is mobile). The first viewport must hold at common desktop widths (1280 to 1600), not only at the comp\'s exact size: fluid columns, no fixed-px grid that wraps 96px narrower. Capture desktop.png (1440 wide, full page) and mobile.png (390 wide, full page) into .impeccable/review/; the gate diffs desktop.png against the comp. Then build-phase.mjs advance.';
     case 'review': return 'Spawn the finish reviewer with the state file, the hero diff report, and the captures; record its disposition with build-phase.mjs finish --disposition <word>.';
     default: return '';
   }

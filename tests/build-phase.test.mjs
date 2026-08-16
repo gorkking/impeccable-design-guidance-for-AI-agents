@@ -250,8 +250,18 @@ describe('build-phase state machine (CLI)', () => {
       assert.equal(res.status, 0, res.stdout);
       assert.match(res.stdout, new RegExp(`ADVANCED ${from}`));
     }
-    let res = run(PHASE_SCRIPT, ['advance', '--force', '--reason', 'single-file delivery needs CSS'], dir);
-    assert.equal(res.status, 0, 'responsive has no gate, so force is moot');
+    // responsive gate: needs desktop.png + mobile.png, and desktop must read as the comp
+    let res = run(PHASE_SCRIPT, ['advance'], dir);
+    assert.equal(res.status, 2);
+    assert.match(res.stdout, /no \.impeccable\/review\/desktop\.png/);
+    const comp = makeComp();
+    const wide = createImage(1440, 900, [240, 237, 226, 255]);
+    blit(wide, resize(comp, 1440, 900), 0, 0);
+    fs.writeFileSync(path.join(dir, '.impeccable', 'review', 'desktop.png'), encodePng(wide));
+    fs.writeFileSync(path.join(dir, '.impeccable', 'review', 'mobile.png'), encodePng(resize(comp, 390, 600)));
+    res = run(PHASE_SCRIPT, ['advance'], dir);
+    assert.equal(res.status, 0, res.stdout);
+    assert.match(res.stdout, /ADVANCED responsive -> review/);
     res = run(PHASE_SCRIPT, ['finish', '--disposition', 'fix'], dir);
     assert.equal(res.status, 0);
     assert.match(res.stdout, /finish      fix/);
