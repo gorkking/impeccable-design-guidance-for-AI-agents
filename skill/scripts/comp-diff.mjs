@@ -103,6 +103,7 @@ export function scorePair(a, b, kind = null) {
     colorIntersection: r4(color.intersection),
     paletteMatch: r4(color.paletteMatch),
     detail: r4(detail.score),
+    detailRaw: r4(detail.rawScore ?? detail.score),
     detailAdded: r4(detail.addedFraction),
     bands: r4(bands),
     _detail: detail,
@@ -133,6 +134,11 @@ export function bestShift(comp, build, workWidth = 256) {
 export function verdictFor(s, kind = null) {
   const painted = kind === 'plate' || kind === 'image' || kind === 'texture';
   if (painted && s.detail < 0.5) return 'missing';
+  // For text, chrome, and controls "missing" means the build has nothing
+  // there, not that a thin strip sits a few pixels off: require the build's
+  // own energy to be near zero relative to the comp (rawScore, before the
+  // added-detail penalty), and drift for a mere misalignment.
+  if (!painted && s.detail < 0.35 && s.structure < 0.6) return (s.detailRaw != null && s.detailRaw < 0.2) ? 'missing' : 'contradicted';
   if (s.detail < 0.35 && s.structure < 0.6) return 'missing';
   // Structure is the one thing a wrong-but-busy region cannot fake: noise,
   // a mirrored crop, a swapped column, a tile shuffle all keep color and

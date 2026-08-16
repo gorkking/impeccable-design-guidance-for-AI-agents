@@ -222,9 +222,18 @@ if (plateId) {
   fs.writeFileSync(refPath, encodePng(ref, { text: { 'impeccable:crop-of': `${spec.comp}#${region.id}` } }));
   const out = arg('out', region.plate);
   fs.mkdirSync(path.dirname(out), { recursive: true });
-  // closest supported size to the region's aspect; the page crops the rest with object-fit
+  // Closest supported size to the region's aspect; the page crops the rest
+  // with object-fit. The plates gate demands >= 1.5x the region's width
+  // (capped at 1536), so a square region wider than 682px cannot ship from
+  // 1024x1024: take the 1536-wide landscape frame instead and let cover crop.
   const aspect = region.px.w / region.px.h;
-  const size = arg('size') || (aspect > 1.2 ? '1536x1024' : aspect < 0.83 ? '1024x1536' : '1024x1024');
+  const needW = Math.min(1536, Math.ceil(region.px.w * 1.5));
+  let size = arg('size');
+  if (!size) {
+    if (aspect > 1.2) size = '1536x1024';
+    else if (aspect < 0.83) size = needW > 1024 ? '1536x1024' : '1024x1536';
+    else size = needW > 1024 ? '1536x1024' : '1024x1024';
+  }
   const extra = arg('prompt') || (arg('prompt-file') ? fs.readFileSync(arg('prompt-file'), 'utf8') : '');
   const prompt = [platePrompt(spec, region), extra].filter(Boolean).join(' ');
   plateCtx = { spec, specPath, region, ref, refPath, out, size, prompt, comp, encodePng, resize };
@@ -249,8 +258,9 @@ async function scorePlate(ctx, outFile) {
     const min = arg('min') ? parseFloat(arg('min')) : null;
     const line = `PLATE-SCORE ${ctx.region.id} ${(s.overall * 100).toFixed(0)}% against the comp region (structure ${(s.structure * 100).toFixed(0)}%, color ${(s.color * 100).toFixed(0)}%, detail ${(s.detail * 100).toFixed(0)}%)`;
     console.log(line);
-    const bad = s.structure < 0.4 || s.overall < 0.4;
-    if (bad) console.log(`PLATE-WARN the plate does not read as region ${ctx.region.id} (structure ${(s.structure * 100).toFixed(0)}% must be >= 40%, overall >= 40%); open ${outFile} beside ${ctx.refPath} and regenerate with a stricter prompt before building on it. The plates gate will refuse it as it stands.`);
+    const { plateVerdict } = await import('./build-phase.mjs');
+    const v = plateVerdict(ctx.region, s);
+    if (!v.ok) console.log(`PLATE-WARN the plate does not read as region ${ctx.region.id}: ${v.reasons.join('; ')}. Open ${outFile} beside ${ctx.refPath} and regenerate before building on it; the plates gate refuses it as it stands.`);
     if (min != null && s.overall < min) { console.log(`PLATE-REJECTED below --min ${(min * 100).toFixed(0)}%`); process.exit(3); }
   } catch (e) {
     console.log(`PLATE-SCORE unavailable: ${e.message}`);

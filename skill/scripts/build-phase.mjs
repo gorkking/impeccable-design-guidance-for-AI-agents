@@ -195,6 +195,25 @@ export function gateSpec(state, { specPath = SPEC_PATH } = {}) {
   return { ok: true, reasons: [], summary: `${spec.regions.length} regions, ${plates} plates` };
 }
 
+/**
+ * The one plate rule, shared by the plates gate and generate-image's
+ * PLATE-WARN so they never disagree. `score` is compare().whole against the
+ * masked comp crop under cover alignment.
+ */
+export function plateVerdict(region, score) {
+  const isTexture = region.kind === 'texture';
+  const reasons = [];
+  if (isTexture) {
+    const effective = 0.5 * score.color + 0.5 * Math.min(1, score.detail / 0.6);
+    if (effective < PLATE_MIN) reasons.push(`scores ${(effective * 100).toFixed(0)}% as the material of region ${region.id} (color ${(score.color * 100).toFixed(0)}%, detail ${(score.detail * 100).toFixed(0)}%); crop a clean patch of the comp region (comp-spec.mjs --crop ${region.id} --raw) and mirror-tile it, generate only when no clean patch exists`);
+    return { ok: reasons.length === 0, reasons, effective };
+  }
+  if (score.detailAdded > 0.45) reasons.push(`carries detail the comp region ${region.id} does not have (added-detail ${(score.detailAdded * 100).toFixed(0)}% of cells): noise, grain, or a busier subject where the comp is calm; regenerate from the crop reference without adding texture`);
+  if (score.structure < PLATE_STRUCTURE_MIN) reasons.push(`structure ${(score.structure * 100).toFixed(0)}% against the comp region ${region.id}: the composition of the plate is not the region's (different subject, orientation, or crop); regenerate with comp-spec.mjs --crop ${region.id} as the reference image`);
+  if (score.overall < PLATE_MIN) reasons.push(`scores ${(score.overall * 100).toFixed(0)}% against the comp region ${region.id} (structure ${(score.structure * 100).toFixed(0)}%, color ${(score.color * 100).toFixed(0)}%, detail ${(score.detail * 100).toFixed(0)}%); regenerate with the crop as --ref and the comp-spec plate prompt`);
+  return { ok: reasons.length === 0, reasons, effective: score.overall };
+}
+
 export function gatePlates(state, { specPath = SPEC_PATH } = {}) {
   const spec = loadSpec(specPath);
   if (!spec) return { ok: false, reasons: ['no spec'] };
@@ -221,10 +240,8 @@ export function gatePlates(state, { specPath = SPEC_PATH } = {}) {
       const ref = plateReference(comp, spec, r);
       const res = compare({ comp: ref, build: img, align: 'cover', spec: null, kind: r.kind });
       score = res.whole;
-      const effective = isTexture ? 0.5 * score.color + 0.5 * Math.min(1, score.detail / 0.6) : score.overall;
-      if (!isTexture && score.detailAdded > 0.45) reasons.push(`plate ${file} carries detail the comp region ${r.id} does not have (added-detail ${(score.detailAdded * 100).toFixed(0)}% of cells): noise, grain, or a busier subject where the comp is calm. Regenerate from the crop reference; do not add texture the comp does not show.`);
-      if (!isTexture && score.structure < PLATE_STRUCTURE_MIN) reasons.push(`plate ${file} has structure ${(score.structure * 100).toFixed(0)}% against the comp region ${r.id}: the composition of the plate is not the region's (a different subject, orientation, or crop). Regenerate with comp-spec.mjs --crop ${r.id} as the reference image; a plate that only shares the palette and busyness is not this plate.`);
-      if (effective < PLATE_MIN) reasons.push(`plate ${file} scores ${(effective * 100).toFixed(0)}% against the comp region ${r.id} (structure ${(score.structure * 100).toFixed(0)}%, color ${(score.color * 100).toFixed(0)}%, detail ${(score.detail * 100).toFixed(0)}%); it does not read as the same ${isTexture ? 'material' : 'region'}. Regenerate with the crop as --ref and the comp-spec plate prompt${isTexture ? ', or crop a clean patch of the comp region and tile it' : ''}.`);
+      const v = plateVerdict(r, score);
+      for (const reason of v.reasons) reasons.push(`plate ${file}: ${reason}`);
     }
     plates.push({ id: r.id, file, status: 'ok', size: `${img.width}x${img.height}`, score: score ? score.overall : null });
   }
@@ -401,7 +418,10 @@ export function gateResponsive(state, { specPath = SPEC_PATH, min = RESPONSIVE_M
   let report;
   try { report = JSON.parse(res.stdout); } catch { return { ok: false, reasons: [`comp-diff failed on ${desktop}: ${res.stderr || res.stdout}`] }; }
   const missing = report.regions.filter((r) => r.verdict === 'missing');
-  const contradictedDirection = report.regions.filter((r) => r.verdict === 'contradicted' && (r.kind === 'plate' || r.kind === 'image' || r.kind === 'text'));
+  // A plate placed and passed at the hero is not re-litigated at 1440: the
+  // rescale alone drops SSIM on a busy region. Text can still contradict
+  // (a wrapped headline is a different composition).
+  const contradictedDirection = report.regions.filter((r) => r.verdict === 'contradicted' && r.kind === 'text');
   if (report.overall < min) reasons.push(`the desktop capture (${report.buildSize}) scores ${(report.overall * 100).toFixed(0)}% against the comp, under ${(min * 100).toFixed(0)}%: the first viewport does not survive a common desktop width. The hero passed at ${state.breakpoint || 'the comp size'}; the layout must hold from ~1280 up, not only at the comp's exact width (grid columns in fr / minmax, not fixed px that overflow and wrap).`);
   for (const r of missing) reasons.push(`at desktop width, region ${r.id} is missing`);
   for (const r of contradictedDirection) reasons.push(`at desktop width, region ${r.id} (${r.kind}) is contradicted (structure ${(r.score.structure * 100).toFixed(0)}%)`);
@@ -542,7 +562,7 @@ async function main() {
     const which = process.argv[3];
     if (which !== 'hero') { console.error('build-phase: record hero --build <png>'); process.exit(1); }
     const gate = gateHero(state, { buildPath: arg('build', HERO_REPRO), min: arg('min') ? parseFloat(arg('min')) : HERO_MIN });
-    state.phases.hero.attempts += 1;
+    if (state.phases.hero.status !== 'closed') state.phases.hero.attempts += 1;
     state.phases.hero.gate = { ...gate, at: now() };
     saveState(state);
     // record is the look, advance is the gate: on the plates-only capture,
