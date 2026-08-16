@@ -442,7 +442,15 @@ export function runGate(state, phase, opts = {}) {
  *  in words is the only one; the parent quotes it. A reason that does not name
  *  the user is a model talking itself past its own gate, and it is refused. */
 export function forceAllowed(reason) {
-  return typeof reason === 'string' && /\buser\b|\bthey (said|asked|told)\b|\bpaul\b/i.test(reason) && reason.trim().length > 20;
+  if (typeof reason !== 'string' || reason.trim().length < 20) return false;
+  const namesUser = /\buser\b|\bthey (said|asked|told|chose|picked)\b|\bpaul\b/i.test(reason);
+  // The user must be downgrading the comp itself, not "approving" a
+  // translation the model proposed. A reason that keeps the comp's
+  // topology/palette while dropping "pixel-level" is a translation, and
+  // translation is what the gate measures; it is not a downgrade.
+  const aboutComp = /\b(comp|mock|mockup|composition|fidelity|plate|region)\b/i.test(reason);
+  const isTranslationDodge = /truthful|semantic|pixel-level|prioriti[sz]e (facts|semantics|accessibility)/i.test(reason) && !/(drop|skip|remove|without|not needed|don't need|do not need|ignore) (the )?(comp|plate|region|fidelity)/i.test(reason);
+  return namesUser && aboutComp && !isTranslationDodge;
 }
 
 export function advance(state, { force = false, reason = null, gateOpts = {} } = {}) {
