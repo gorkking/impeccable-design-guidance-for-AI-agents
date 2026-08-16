@@ -205,7 +205,7 @@ function parseSize(sizeStr) {
 const plateId = arg('plate');
 let plateCtx = null;
 if (plateId) {
-  const { loadSpec, platePrompt, SPEC_PATH } = await import('./comp-spec.mjs');
+  const { loadSpec, platePrompt, plateReference, SPEC_PATH } = await import('./comp-spec.mjs');
   const { decodePng, encodePng } = await import('./lib/png.mjs');
   const { crop, resize } = await import('./lib/raster.mjs');
   const specPath = arg('spec', SPEC_PATH);
@@ -216,7 +216,7 @@ if (plateId) {
   if (region.medium !== 'raster') { console.error(`generate-image: region ${plateId} is ${region.medium}, not a plate; set its kind to plate|image|texture in the regions file`); process.exit(1); }
   let comp;
   try { comp = decodePng(fs.readFileSync(spec.comp)); } catch (e) { console.error(`generate-image: cannot read comp ${spec.comp}: ${e.message}`); process.exit(1); }
-  const ref = crop(comp, region.px.x, region.px.y, region.px.w, region.px.h);
+  const ref = plateReference(comp, spec, region);
   const refPath = path.join(path.dirname(specPath), 'crops', `${region.id}.png`);
   fs.mkdirSync(path.dirname(refPath), { recursive: true });
   fs.writeFileSync(refPath, encodePng(ref, { text: { 'impeccable:crop-of': `${spec.comp}#${region.id}` } }));
@@ -249,7 +249,8 @@ async function scorePlate(ctx, outFile) {
     const min = arg('min') ? parseFloat(arg('min')) : null;
     const line = `PLATE-SCORE ${ctx.region.id} ${(s.overall * 100).toFixed(0)}% against the comp region (structure ${(s.structure * 100).toFixed(0)}%, color ${(s.color * 100).toFixed(0)}%, detail ${(s.detail * 100).toFixed(0)}%)`;
     console.log(line);
-    if (s.overall < 0.5) console.log(`PLATE-WARN the plate does not read as region ${ctx.region.id}; open ${outFile} beside ${ctx.refPath} and regenerate with a stricter prompt (or pass a different --ref) before building on it.`);
+    const bad = s.structure < 0.4 || s.overall < 0.4;
+    if (bad) console.log(`PLATE-WARN the plate does not read as region ${ctx.region.id} (structure ${(s.structure * 100).toFixed(0)}% must be >= 40%, overall >= 40%); open ${outFile} beside ${ctx.refPath} and regenerate with a stricter prompt before building on it. The plates gate will refuse it as it stands.`);
     if (min != null && s.overall < min) { console.log(`PLATE-REJECTED below --min ${(min * 100).toFixed(0)}%`); process.exit(3); }
   } catch (e) {
     console.log(`PLATE-SCORE unavailable: ${e.message}`);

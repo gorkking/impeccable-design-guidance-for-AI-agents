@@ -76,7 +76,7 @@ export function ssim(a, b, win = 8) {
 }
 
 /** SSIM of `a` against `b` shifted by (dx, dy); the overlap is compared, edges dropped. */
-function ssimShifted(a, b, dx, dy, win) {
+export function ssimShifted(a, b, dx, dy, win = 8) {
   const w = a.width - Math.abs(dx), h = a.height - Math.abs(dy);
   if (w < win || h < win) return 0;
   const sa = { width: w, height: h, data: new Float32Array(w * h) };
@@ -184,7 +184,7 @@ export function toHex(rgb) {
 
 /**
  * Palette match 0..1: for each dominant comp color, coverage-weighted best
- * Lab match in the build's dominant set (dE 0 -> 1, dE >= 40 -> 0).
+ * Lab match in the build's dominant set (dE 0 -> 1, dE >= 25 -> 0).
  */
 export function paletteMatch(compColors, buildColors) {
   if (!compColors.length) return 1;
@@ -192,7 +192,7 @@ export function paletteMatch(compColors, buildColors) {
   for (const c of compColors) {
     let best = Infinity;
     for (const b of buildColors) best = Math.min(best, deltaE(c.lab, b.lab));
-    s += c.coverage * Math.max(0, 1 - best / 40); wsum += c.coverage;
+    s += c.coverage * Math.max(0, 1 - best / 25); wsum += c.coverage;
   }
   return wsum ? s / wsum : 1;
 }
@@ -240,11 +240,15 @@ export function detailScore(imgA, imgB, cols = 12, rows = 8) {
   for (let i = 0; i < a.cells.length; i++) {
     const ca = a.cells[i], cb = b.cells[i];
     ratios[i] = ca > floor ? cb / ca : (cb > floor ? Infinity : 1);
-    if (ca > floor) { s += Math.min(1, cb / ca) * ca; w += ca; }
+    // Signed: too much energy is as wrong as too little. Noise, a tile
+    // shuffle, or a mosaic saturate a one-sided ratio; a real plate does not.
+    if (ca > floor) { s += Math.min(cb / ca, ca / cb) * ca; w += ca; }
     if (cb > ca * 1.8 && cb > floor * 2) { added += 1; }
     addedW += 1;
   }
-  return { score: w ? s / w : 1, addedFraction: addedW ? added / addedW : 0, comp: a, build: b, ratios };
+  const addedFraction = addedW ? added / addedW : 0;
+  const raw = w ? s / w : 1;
+  return { score: Math.max(0, raw - 0.5 * addedFraction), rawScore: raw, addedFraction, comp: a, build: b, ratios };
 }
 
 // ---- pixel diff -----------------------------------------------------------

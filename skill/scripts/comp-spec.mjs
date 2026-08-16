@@ -24,9 +24,12 @@
  *
  * Step 3, use it:
  *   node comp-spec.mjs --print                      # compact spec for the build thread
- *   node comp-spec.mjs --crop exploded-plate --out tmp/plate-src.png [--scale 2]
+ *   node comp-spec.mjs --crop exploded-plate --out tmp/plate-src.png [--scale 2] [--raw]
  *     crops the region from the comp (reference for a plate regeneration; a
- *     crop is never a shipping asset, its resolution is comp grade)
+ *     crop is never a shipping asset, its resolution is comp grade). For a
+ *     raster region the crop has overlapping text/control/chrome regions
+ *     painted out, matching what the plate prompt asks the generator to
+ *     remove; --raw keeps them.
  *   node comp-spec.mjs --plate-prompt exploded-plate  # the regeneration prompt for that region
  *
  * comp-diff.mjs reads the same spec (`--spec`) so its region rows and this
@@ -90,6 +93,33 @@ function energyOf(img) {
 }
 
 
+/**
+ * Grid cells (10x10) that carry ink the regions do not name. A regions file
+ * that omits the comp's callouts, notes block, or parts table makes those
+ * elements invisible to every later gate (they are never 'missing' if they
+ * were never named), so the spec refuses to close over them. Texture and
+ * band regions do not cover: a full-bleed paper texture names the ground,
+ * not the drawing on it.
+ */
+export function uncoveredInkCells(comp, regions) {
+  const grid = detailGrid(comp, 10, 10, 512);
+  const cells = [];
+  // The ground's own energy (paper grain, gradient) is the quietest tenth of
+  // cells; ink is anything clearly above that. Median-relative thresholds
+  // fail on textured comps where every cell carries grain.
+  const energies = [...grid.cells].sort((a, b) => a - b);
+  const ground = energies[Math.floor(energies.length * 0.1)] || 0;
+  const threshold = Math.max(4, ground * 2.2, ground + 12);
+  for (let r = 0; r < 10; r++) for (let c = 0; c < 10; c++) {
+    const e = grid.cells[r * 10 + c];
+    if (e < threshold) continue;
+    const cx = (c + 0.5) / 10, cy = (r + 0.5) / 10;
+    const covered = regions.some((reg) => reg.kind !== 'texture' && reg.kind !== 'band' && cx >= reg.box.x && cx <= reg.box.x + reg.box.w && cy >= reg.box.y && cy <= reg.box.y + reg.box.h);
+    if (!covered) cells.push(`${COLS[c]}${r}`);
+  }
+  return cells;
+}
+
 export function measureRegions(comp, regionsInput, compPath) {
   const regions = [];
   const seen = new Set();
@@ -117,11 +147,16 @@ export function measureRegions(comp, regionsInput, compPath) {
       text: raw.text || null,
     });
   }
+  const uncovered = uncoveredInkCells(comp, regions);
+  if (uncovered.length > 3 && !regionsInput.allowUncovered) {
+    throw new Error(`grid cells ${uncovered.join(', ')} carry ink no region names. Every element the comp shows must be in a region (text, control, chrome, or a plate) so its absence in the build can be measured; add regions for them, or set "allowUncovered": true in the regions file after confirming those cells are empty ground.`);
+  }
   return {
     tool: 'comp-spec',
     version: 1,
     createdAt: new Date().toISOString(),
     comp: compPath,
+    uncoveredInkCells: uncovered,
     compSize: { width: comp.width, height: comp.height },
     aspect: r4(comp.width / comp.height),
     orientation: comp.width >= comp.height ? 'landscape' : 'portrait',
@@ -142,6 +177,31 @@ export function autoRegions(comp) {
 }
 
 const r4 = (v) => Math.round(v * 10000) / 10000;
+
+/**
+ * The comp crop of a raster region, with every overlapping semantic region
+ * (text, control, chrome) painted out in the crop's own ground color. The
+ * plate prompt tells the generator to remove UI text and chrome, so a good
+ * plate must be scored against a crop that has them removed too; otherwise
+ * the plate loses structure points for obeying the spec.
+ */
+export function plateReference(comp, spec, region) {
+  const c = crop(comp, region.px.x, region.px.y, region.px.w, region.px.h);
+  const ground = (region.palette && region.palette[0] && hexToRgb(region.palette[0].hex)) || [255, 255, 255];
+  for (const other of spec.regions || []) {
+    if (other.id === region.id || RASTER_KINDS.has(other.kind) || other.kind === 'band') continue;
+    const ox = Math.max(0, other.px.x - region.px.x), oy = Math.max(0, other.px.y - region.px.y);
+    const ox2 = Math.min(region.px.w, other.px.x + other.px.w - region.px.x), oy2 = Math.min(region.px.h, other.px.y + other.px.h - region.px.y);
+    if (ox2 <= ox || oy2 <= oy) continue;
+    fillRect(c, ox, oy, ox2 - ox, oy2 - oy, [...ground, 255]);
+  }
+  return c;
+}
+
+function hexToRgb(hex) {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
+  return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : null;
+}
 
 export function platePrompt(spec, region) {
   const world = spec.palette.slice(0, 3).map((c) => c.hex).join(', ');
@@ -213,7 +273,7 @@ async function main() {
     const region = spec.regions.find((r) => r.id === arg('crop'));
     if (!region) { console.error(`comp-spec: no region ${arg('crop')}; ids: ${spec.regions.map((r) => r.id).join(', ')}`); process.exit(1); }
     const comp = decodePng(fs.readFileSync(spec.comp));
-    let c = crop(comp, region.px.x, region.px.y, region.px.w, region.px.h);
+    let c = region.medium === 'raster' && !flag('raw') ? plateReference(comp, spec, region) : crop(comp, region.px.x, region.px.y, region.px.w, region.px.h);
     const scale = parseFloat(arg('scale', '1'));
     if (scale > 1) c = resize(c, c.width * scale, c.height * scale);
     const out = arg('out', path.join(BUILD_DIR, 'crops', `${region.id}.png`));

@@ -614,16 +614,22 @@ rivals to your habitual layout, and keep only what makes this product clearer.${
   assignment by deal order, so the dice still choose. Verdicts and donations
   apply between the challengers, weighed against the leader. The pick card
   sits out; the canon stays, as always.`;
-  const telemetryBlock = data.source === 'api'
-    ? `TELEMETRY: after the user's choice resolves, rerun this script once with
-  --kind <assigned|pick|challenger|canon> --from ${key} --scope ${scope}${mode ? ` --mode ${mode}` : ''},
-  adding --chosen <challenger-id> when a dealt challenger won and keeping
-  --register <safer|bolder> when the resolved round came from a steered hand.
-  One ping per resolved attended round. The ping is anonymous, the card kind
-  plus the catalog id when one won; your grounded candidates' names never
-  leave the machine, and the ping is skipped automatically when DO_NOT_TRACK
-  or IMPECCABLE_NO_TELEMETRY is set.\n`
-    : '';
+  // The one command that follows a resolved choice. It records the choice
+  // (anonymous telemetry on API-dealt rolls; skipped under DO_NOT_TRACK /
+  // IMPECCABLE_NO_TELEMETRY) and opens the build's phase machine, whose
+  // first gate is the comp round on a comp-led build. Every run that skipped
+  // the comp round did so by treating a separate "telemetry ping" as
+  // bookkeeping: suppressed with >/dev/null, run after the page was written,
+  // or never run. So there is no separate ping; the start command is the
+  // ping, and it is not optional.
+  const nextCommand = scope === 'direction'
+    ? `AFTER THE CHOICE, run exactly one command and follow what it prints (do not suppress its output; do not write page code before it):
+  node ${relative(process.cwd(), here) || '.'}/build-phase.mjs start --direction ${key} --kind <assigned|pick|challenger|canon>${data.source === 'api' ? ' [--chosen <challenger-id>]' : ''}${register ? ` --register ${register}` : ''}
+  It records the choice${data.source === 'api' ? ' (anonymous: card kind plus catalog id; skipped under DO_NOT_TRACK / IMPECCABLE_NO_TELEMETRY)' : ''} and opens the build phases: on a comp-led build the comp round is the first gate (three comps, one approved) and no page code is written before it closes; on a code-led build it prints the contract step. A build without this state file is a build the finish reviewer treats as having skipped the round.\n`
+    : (data.source === 'api'
+      ? `AFTER THE CHOICE, run once: node ${relative(process.cwd(), here) || '.'}/concept-seed.mjs --kind <assigned|pick|challenger|canon> --from ${key} --scope ${scope}${mode ? ` --mode ${mode}` : ''} (records the choice; the locked card's comp is the approved comp, so then: node ${relative(process.cwd(), here) || '.'}/build-phase.mjs start --comp <that comp>).\n`
+      : `AFTER THE CHOICE: the locked card's comp is the approved comp; run node ${relative(process.cwd(), here) || '.'}/build-phase.mjs start --comp <that comp> and follow what it prints.\n`);
+  const telemetryBlock = nextCommand;
   const assignedBlock = register === null
     ? `${scope === 'direction' ? `ASSIGNED INDEX: ${buildIndex}` : `DEALT INDICES: ${dealtIndices.join(', ')} (index ${buildIndex} leads)`}
   ${promotedInstruction}
@@ -734,6 +740,16 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         scope: scopeIdx !== -1 ? args[scopeIdx + 1] : undefined,
       }));
     } else {
+      // A dealt roll leaves a marker the build phase clears: context.mjs and
+      // detect.mjs read it and refuse to treat page work as done while a
+      // direction is chosen but the build never started (COMP_ROUND_OPEN).
+      try {
+        const { mkdirSync, writeFileSync: wf } = await import('node:fs');
+        if (scopeIdx !== -1 && args[scopeIdx + 1] === 'direction') {
+          mkdirSync(resolve(process.cwd(), '.impeccable', 'build'), { recursive: true });
+          wf(resolve(process.cwd(), '.impeccable', 'build', 'pending.json'), JSON.stringify({ scope: 'direction', at: new Date().toISOString() }, null, 2));
+        }
+      } catch { /* marker is best-effort */ }
       // Mechanical init gate: prose alone does not keep a model from dealing
       // before init, and fresh repos produced exactly that skip (the model
       // rolled directions with no PRODUCT.md, so nothing grounded the fusion).

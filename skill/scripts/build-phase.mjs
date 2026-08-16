@@ -35,9 +35,14 @@
  *                closing records that file as the state's comp.
  *   spec      -> spec.json exists and has >= 1 region
  *   plates    -> every region with medium raster has its plate file, decodable,
- *                at least 2x the comp region's pixel size in width, and the
- *                plate scores >= PLATE_MIN against the comp crop (comp-diff,
- *                detail-weighted). A missing or thin plate names itself.
+ *                at least 1.5x the comp region's pixel width (textures
+ *                exempt), and reads as the region against the masked comp
+ *                crop: structure >= PLATE_STRUCTURE_MIN and comp-diff overall
+ *                >= PLATE_MIN (textures: palette + grain only). Structure is
+ *                the floor because it is what a wrong-but-busy plate cannot
+ *                fake: noise, a mirror, a mosaic, another region all keep
+ *                the palette and the energy and lose structure. A missing
+ *                or thin plate names itself.
  *   hero      -> every plate is referenced by a source file (the artifact
  *                named at start, else a bounded walk of the project), and
  *                .impeccable/review/hero-repro.png exists and comp-diff overall
@@ -61,14 +66,15 @@ import { decodePng } from './lib/png.mjs';
 const require = createRequire(import.meta.url);
 import { crop } from './lib/raster.mjs';
 import { compare, verdictFor } from './comp-diff.mjs';
-import { SPEC_PATH, BUILD_DIR, loadSpec } from './comp-spec.mjs';
+import { SPEC_PATH, BUILD_DIR, loadSpec, plateReference } from './comp-spec.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const STATE_PATH = path.join(BUILD_DIR, 'state.json');
 export const PHASES = ['comps', 'spec', 'plates', 'hero', 'sections', 'motion', 'responsive', 'review'];
 export const MOCKS_DIR = path.join('.impeccable', 'mocks');
 export const HERO_MIN = 0.72;
-export const PLATE_MIN = 0.5;
+export const PLATE_MIN = 0.4;
+export const PLATE_STRUCTURE_MIN = 0.4;
 export const HERO_REPRO = path.join('.impeccable', 'review', 'hero-repro.png');
 
 function arg(name, fallback = null) {
@@ -79,6 +85,41 @@ function arg(name, fallback = null) {
 }
 const flag = (name) => process.argv.includes(`--${name}`);
 const now = () => new Date().toISOString();
+
+/** The recorded build path (config.local.json over config.json), or null. */
+export function readBuildPath(cwd = process.cwd()) {
+  let value = null;
+  for (const name of ['config.json', 'config.local.json']) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(path.join(cwd, '.impeccable', name), 'utf8'));
+      if (raw?.buildPath === 'comp' || raw?.buildPath === 'code') value = raw.buildPath;
+    } catch { /* absent */ }
+  }
+  return value;
+}
+
+/**
+ * Whether a direction was dealt and the build never started, or started and
+ * stopped before the hero gate: the condition context.mjs and detect.mjs
+ * report as COMP_ROUND_OPEN when page code exists. Returns null when the
+ * build path is code-led (no round owed) or nothing is pending.
+ */
+export function compRoundOpen(cwd = process.cwd()) {
+  const buildPath = readBuildPath(cwd);
+  if (buildPath === 'code') return null;
+  const pending = path.join(cwd, BUILD_DIR, 'pending.json');
+  const statePath = path.join(cwd, STATE_PATH);
+  if (fs.existsSync(pending) && !fs.existsSync(statePath)) return { reason: 'a direction was chosen (concept-seed rolled) but build-phase.mjs start never ran', pending };
+  if (fs.existsSync(statePath)) {
+    try {
+      const st = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      const idx = PHASES.indexOf(st.phase);
+      if (idx !== -1 && idx <= PHASES.indexOf('hero') && st.phases?.comps?.status !== 'skipped' && st.phases?.comps?.status !== 'closed') return { reason: `build-phase is at ${st.phase}; the comps phase never closed`, state: statePath };
+      if (idx !== -1 && idx <= PHASES.indexOf('hero')) return { reason: `build-phase is at ${st.phase}; the hero gate has not passed`, state: statePath };
+    } catch { /* unreadable: say nothing */ }
+  }
+  return null;
+}
 
 export function loadState(statePath = STATE_PATH) {
   if (!fs.existsSync(statePath)) return null;
@@ -172,10 +213,12 @@ export function gatePlates(state, { specPath = SPEC_PATH } = {}) {
     if (!isTexture && img.width < minW) reasons.push(`plate ${file} is ${img.width}px wide; the comp region is ${r.px.w}px and a shipping plate needs at least ${Math.round(minW)}px. Regenerate at asset size, do not crop the comp.`);
     let score = null;
     if (comp) {
-      const ref = crop(comp, r.px.x, r.px.y, r.px.w, r.px.h);
+      const ref = plateReference(comp, spec, r);
       const res = compare({ comp: ref, build: img, align: 'cover', spec: null, kind: r.kind });
       score = res.whole;
       const effective = isTexture ? 0.5 * score.color + 0.5 * Math.min(1, score.detail / 0.6) : score.overall;
+      if (!isTexture && score.detailAdded > 0.45) reasons.push(`plate ${file} carries detail the comp region ${r.id} does not have (added-detail ${(score.detailAdded * 100).toFixed(0)}% of cells): noise, grain, or a busier subject where the comp is calm. Regenerate from the crop reference; do not add texture the comp does not show.`);
+      if (!isTexture && score.structure < PLATE_STRUCTURE_MIN) reasons.push(`plate ${file} has structure ${(score.structure * 100).toFixed(0)}% against the comp region ${r.id}: the composition of the plate is not the region's (a different subject, orientation, or crop). Regenerate with comp-spec.mjs --crop ${r.id} as the reference image; a plate that only shares the palette and busyness is not this plate.`);
       if (effective < PLATE_MIN) reasons.push(`plate ${file} scores ${(effective * 100).toFixed(0)}% against the comp region ${r.id} (structure ${(score.structure * 100).toFixed(0)}%, color ${(score.color * 100).toFixed(0)}%, detail ${(score.detail * 100).toFixed(0)}%); it does not read as the same ${isTexture ? 'material' : 'region'}. Regenerate with the crop as --ref and the comp-spec plate prompt${isTexture ? ', or crop a clean patch of the comp region and tile it' : ''}.`);
     }
     plates.push({ id: r.id, file, status: 'ok', size: `${img.width}x${img.height}`, score: score ? score.overall : null });
@@ -220,6 +263,30 @@ export function unreferencedPlates(spec, artifact = null) {
   return missing;
 }
 
+/** Organic clip-path findings whose selector's element the artifact places (by class/id name) on a raster region. Cheap heuristic: the finding's selector or the surrounding rule mentions the region id or its plate stem. */
+export function organicClipRegions(artifactFile, spec) {
+  let scan;
+  try {
+    const mod = require(path.join(HERE, '..', '..', 'cli', 'engine', 'rules', 'checks.mjs'));
+    scan = mod.scanCssTextForOrganicClipPath;
+  } catch { scan = null; }
+  if (!scan) return [];
+  let html = '';
+  try { html = fs.readFileSync(artifactFile, 'utf8'); } catch { return []; }
+  const findings = scan(html);
+  if (!findings.length) return [];
+  const rasterRegions = (spec.regions || []).filter((r) => r.medium === 'raster');
+  const out = [];
+  for (const f of findings) {
+    const sel = String(f.selector || '').toLowerCase();
+    for (const r of rasterRegions) {
+      const stem = path.basename(r.plate || '', path.extname(r.plate || '')).toLowerCase();
+      if ((sel && (sel.includes(r.id.toLowerCase()) || (stem && sel.includes(stem)))) || rasterRegions.length === 1) { out.push({ id: r.id, snippet: f.snippet }); break; }
+    }
+  }
+  return out;
+}
+
 export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, min = HERO_MIN, outDir = path.join('.impeccable', 'review', 'diff', 'hero'), artifact = null } = {}) {
   if (!fs.existsSync(buildPath)) return { ok: false, reasons: [`no hero capture at ${buildPath}: screenshot the first viewport at the comp's own dimensions (${state.breakpoint || 'comp size'}) into that path`] };
   const specForRefs = loadSpec(specPath);
@@ -236,11 +303,32 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   let report;
   try { report = JSON.parse(res.stdout); } catch { return { ok: false, reasons: ['comp-diff produced no report'] }; }
   const reasons = [];
+  // The capture must be the comp's own frame: a 1440-wide capture of a
+  // 1536x1024 comp is a different composition before anything is compared.
+  const [cw, ch] = String(report.compSize || '').split('x').map(Number);
+  const [bw, bh] = String(report.buildSize || '').split('x').map(Number);
+  if (cw && ch && bw && bh) {
+    const compAspect = cw / ch, buildAspect = bw / bh;
+    if (bw < cw * 0.9 || Math.abs(buildAspect - compAspect) / compAspect > 0.08) reasons.push(`hero capture is ${bw}x${bh}; the comp is ${cw}x${ch}. Capture the first viewport at the comp's own dimensions (viewport ${cw}x${ch}, not full page) into ${buildPath}.`);
+  }
   if (report.overall < min) reasons.push(`hero overall ${(report.overall * 100).toFixed(0)}% < ${(min * 100).toFixed(0)}% (structure ${(report.scores.structure * 100).toFixed(0)}%, color ${(report.scores.color * 100).toFixed(0)}%, detail ${(report.scores.detail * 100).toFixed(0)}%)`);
+  if (report.scores.colorIntersection != null && report.scores.colorIntersection < 0.2) reasons.push(`the palette is not the comp's (color intersection ${(report.scores.colorIntersection * 100).toFixed(0)}%): comp ${(report.palette.comp || []).slice(0, 3).map((c) => c.hex).join(' ')} vs build ${(report.palette.build || []).slice(0, 3).map((c) => c.hex).join(' ')}. Use the spec's sampled palette values, not a rendition of them.`);
   const missing = report.regions.filter((r) => r.verdict === 'missing');
   for (const r of missing) reasons.push(`region ${r.id} is missing (detail ${(r.score.detail * 100).toFixed(0)}%, structure ${(r.score.structure * 100).toFixed(0)}%): the comp shows material the build does not`);
   const contradicted = report.regions.filter((r) => r.verdict === 'contradicted');
-  if (contradicted.length > Math.max(1, Math.floor(report.regions.length / 3))) reasons.push(`${contradicted.length} of ${report.regions.length} regions contradicted: ${contradicted.map((r) => r.id).join(', ')}`);
+  // A contradicted plate, image, or text region is the wrong page whatever
+  // the mean says; chrome and controls get the one-third allowance.
+  const directionContradicted = contradicted.filter((r) => r.kind === 'plate' || r.kind === 'image' || r.kind === 'text');
+  for (const r of directionContradicted) reasons.push(`region ${r.id} (${r.kind}) is contradicted (structure ${(r.score.structure * 100).toFixed(0)}%, detail added ${(r.score.detailAdded * 100).toFixed(0)}%): ${r.kind === 'text' ? 'the composition of this text region differs from the comp; re-derive it from the spec box' : 'the plate here does not read as the comp region; regenerate it with the crop as reference (generate-image.mjs --plate ' + r.id + ') and place it at its box'}`);
+  const otherContradicted = contradicted.filter((r) => !directionContradicted.includes(r));
+  if (otherContradicted.length > Math.max(1, Math.floor(report.regions.length / 3))) reasons.push(`${otherContradicted.length} of ${report.regions.length} regions contradicted: ${otherContradicted.map((r) => r.id).join(', ')}`);
+  // A CSS-drawn organic contour sitting on a raster region's box is the plate
+  // replaced by code, whatever the pixels score.
+  const artifactFile = artifact || state.artifact || null;
+  if (artifactFile && fs.existsSync(artifactFile) && specForRefs) {
+    const organic = organicClipRegions(artifactFile, specForRefs);
+    for (const r of organic) reasons.push(`artifact draws an organic clip-path (${r.snippet}) inside raster region ${r.id}'s box; that region ships as its plate, never as a polygon`);
+  }
   const worstRegions = [...report.regions].sort((a, b) => a.score.overall - b.score.overall).slice(0, 3);
   const regionDir = path.join(outDir, 'regions');
   return {
@@ -375,6 +463,23 @@ async function main() {
     const direction = arg('direction');
     if (!comp && !direction) { console.error('build-phase: start needs --comp <approved comp png> (comp already approved) or --direction <seed key> (comp round still to run)'); process.exit(1); }
     if (comp && !fs.existsSync(comp)) { console.error(`build-phase: comp ${comp} does not exist`); process.exit(1); }
+    // The direction choice ping rides on start (see concept-seed.mjs): one
+    // command records the choice and opens the phases. Never fatal.
+    if (direction && arg('kind')) {
+      try {
+        const { pingChosen } = await import('./concept-seed.mjs');
+        const sent = await pingChosen({ chosenId: arg('chosen') || undefined, key: direction, scope: 'direction', mode: arg('mode') || undefined, kind: arg('kind'), register: arg('register') || undefined });
+        console.log(sent ? 'choice recorded' : 'choice ping skipped');
+      } catch { console.log('choice ping skipped'); }
+    }
+    // Clear the roll's pending marker: the build has started.
+    try { fs.rmSync(path.join(BUILD_DIR, 'pending.json'), { force: true }); } catch { /* absent */ }
+    // Code-led: no phase machine to run; say what comes next and stop.
+    const buildPath = readBuildPath();
+    if (direction && !comp && buildPath === 'code') {
+      console.log('CODE-LED (from .impeccable config): no comp round and no phase gates. Write the direction contract (reference/new-work.md section 5), build, and finish per section 7. The chosen decision comp, if any, rides to the finish review as the critique reference.');
+      return;
+    }
     let breakpoint = arg('breakpoint');
     if (!breakpoint && comp) { try { const i = decodePng(fs.readFileSync(comp)); breakpoint = `${i.width}x${i.height}`; } catch { /* leave null */ } }
     const existing = loadState();

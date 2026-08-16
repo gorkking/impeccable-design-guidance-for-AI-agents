@@ -41,7 +41,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { decodePng, encodePng } from './lib/png.mjs';
 import { crop, resize, fit, blit, createImage, fillRect, strokeRect, drawLabel } from './lib/raster.mjs';
-import { structureScore, colorScore, detailScore, diffMap, horizontalBands, bandScore, dominantColors } from './lib/image-metrics.mjs';
+import { structureScore, colorScore, detailScore, diffMap, horizontalBands, bandScore, dominantColors, toGray, blurGray, ssimShifted } from './lib/image-metrics.mjs';
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`);
@@ -109,10 +109,36 @@ export function scorePair(a, b, kind = null) {
   };
 }
 
+/** Kinds that carry the direction: a wrong one is the wrong page, whatever the mean says. */
+export const DIRECTION_KINDS = new Set(['plate', 'image', 'text']);
+
+/** Best small global translation (build relative to comp), in pixels, by blurred-gray SSIM. */
+export function bestShift(comp, build, workWidth = 256) {
+  const h = Math.max(8, Math.round((comp.height / comp.width) * workWidth));
+  const a = blurGray(toGray(resize(comp, workWidth, h)), 2);
+  const b = blurGray(toGray(resize(build, workWidth, h)), 2);
+  const maxShift = Math.max(2, Math.round(workWidth * 0.04));
+  let best = { dx: 0, dy: 0, score: ssimShifted(a, b, 0, 0) };
+  for (const dy of [-maxShift, -maxShift / 2, 0, maxShift / 2, maxShift]) {
+    for (const dx of [-maxShift, -maxShift / 2, 0, maxShift / 2, maxShift]) {
+      const sc = ssimShifted(a, b, Math.round(dx), Math.round(dy));
+      if (sc > best.score + 0.01) best = { dx: Math.round(dx), dy: Math.round(dy), score: sc };
+    }
+  }
+  const scale = comp.width / workWidth;
+  return { dx: Math.round(best.dx * scale), dy: Math.round(best.dy * scale), score: best.score };
+}
+
 export function verdictFor(s, kind = null) {
   const painted = kind === 'plate' || kind === 'image' || kind === 'texture';
   if (painted && s.detail < 0.5) return 'missing';
   if (s.detail < 0.35 && s.structure < 0.6) return 'missing';
+  // Structure is the one thing a wrong-but-busy region cannot fake: noise,
+  // a mirrored crop, a swapped column, a tile shuffle all keep color and
+  // energy and lose structure. Below the floor it is contradicted whatever
+  // the weighted mean says; painted regions with invented detail likewise.
+  if (s.structure < 0.3) return 'contradicted';
+  if (painted && (s.structure < 0.45 || s.detailAdded > 0.4)) return 'contradicted';
   if (s.overall >= 0.8) return 'match';
   if (s.overall >= 0.6) return 'drift';
   return 'contradicted';
@@ -202,8 +228,19 @@ export function renderRegionPair(compCrop, buildCrop, id, score) {
 }
 
 export function compare({ comp, build, spec = null, align = 'top', label = '', kind = null }) {
-  const aligned = alignBuild(comp, build, align);
+  let aligned = alignBuild(comp, build, align);
   const whole = scorePair(comp, aligned, kind);
+  // Region crops are taken at fixed boxes, so a small global offset (a
+  // taller masthead, a scrollbar) would read every thin region as
+  // contradicted while the whole-image search forgives it. Find the best
+  // global translation once and shift the aligned build by it before
+  // cropping regions; the whole score above stays as measured.
+  const shift = bestShift(comp, aligned);
+  if (shift.dx || shift.dy) {
+    const shifted = createImage(aligned.width, aligned.height, [255, 255, 255, 255]);
+    blit(shifted, aligned, -shift.dx, -shift.dy);
+    aligned = shifted;
+  }
   const regions = resolveRegions(comp, spec).map((r) => {
     const a = regionCrop(comp, r), b = regionCrop(aligned, r);
     const s = scorePair(a, b, r.kind);

@@ -44,7 +44,7 @@ describe('comp-spec', () => {
 
   it('measures regions with palette, pixel box, medium, and plate path', () => {
     const comp = makeComp();
-    const spec = measureRegions(comp, { regions: [
+    const spec = measureRegions(comp, { allowUncovered: true, regions: [
       { id: 'masthead', kind: 'chrome', grid: 'A0:J0' },
       { id: 'art', kind: 'plate', grid: 'F1:J4', note: 'noise plate' },
     ] }, 'comp.png');
@@ -57,6 +57,14 @@ describe('comp-spec', () => {
     assert.equal(spec.regions[0].medium, 'semantic');
     assert.equal(spec.orientation, 'landscape');
     assert.match(platePrompt(spec, art), /noise plate/);
+  });
+
+  it('refuses a regions file that leaves comp ink unnamed, unless allowUncovered', () => {
+    const comp = makeComp();
+    // only the masthead named: the headline, plate, and list are ink no region covers
+    assert.throws(() => measureRegions(comp, { regions: [{ id: 'masthead', kind: 'chrome', grid: 'A0:J0' }] }, 'c.png'), /carry ink no region names/);
+    const spec = measureRegions(comp, { allowUncovered: true, regions: [{ id: 'masthead', kind: 'chrome', grid: 'A0:J0' }] }, 'c.png');
+    assert.ok(spec.uncoveredInkCells.length > 3);
   });
 
   it('rejects duplicate ids and missing ids', () => {
@@ -209,7 +217,7 @@ describe('build-phase state machine (CLI)', () => {
     const d3 = fs.mkdtempSync(path.join(os.tmpdir(), 'build-phase-hero-'));
     const comp = makeComp();
     fs.writeFileSync(path.join(d3, 'comp.png'), encodePng(comp));
-    fs.writeFileSync(path.join(d3, 'regions.json'), JSON.stringify({ regions: [
+    fs.writeFileSync(path.join(d3, 'regions.json'), JSON.stringify({ allowUncovered: true, regions: [
       { id: 'masthead', kind: 'chrome', grid: 'A0:J0' },
       { id: 'art', kind: 'plate', grid: 'F1:J4' },
       { id: 'list', kind: 'control', grid: 'A5:J9' },
