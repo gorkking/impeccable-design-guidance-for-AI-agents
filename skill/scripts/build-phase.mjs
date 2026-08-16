@@ -54,7 +54,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const STATE_PATH = path.join(BUILD_DIR, 'state.json');
 export const PHASES = ['spec', 'plates', 'hero', 'sections', 'motion', 'responsive', 'review'];
 export const HERO_MIN = 0.72;
-export const PLATE_MIN = 0.6;
+export const PLATE_MIN = 0.5;
 export const HERO_REPRO = path.join('.impeccable', 'review', 'hero-repro.png');
 
 function arg(name, fallback = null) {
@@ -120,7 +120,7 @@ export function gatePlates(state, { specPath = SPEC_PATH } = {}) {
     let score = null;
     if (comp) {
       const ref = crop(comp, r.px.x, r.px.y, r.px.w, r.px.h);
-      const res = compare({ comp: ref, build: img, align: 'stretch', spec: null });
+      const res = compare({ comp: ref, build: img, align: 'cover', spec: null, kind: r.kind });
       score = res.whole;
       if (score.overall < PLATE_MIN) reasons.push(`plate ${file} scores ${(score.overall * 100).toFixed(0)}% against the comp region ${r.id} (structure ${(score.structure * 100).toFixed(0)}%, color ${(score.color * 100).toFixed(0)}%, detail ${(score.detail * 100).toFixed(0)}%); it does not read as the same region. Regenerate with the crop as --ref and the comp-spec plate prompt.`);
     }

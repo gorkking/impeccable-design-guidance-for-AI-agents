@@ -55,9 +55,19 @@ export function readPng(file) {
   return decodePng(fs.readFileSync(file));
 }
 
-/** Scale the build to the comp's width; take the top comp-height rows (align=top) or squash (align=stretch). */
+/**
+ * Scale the build to the comp's width; take the top comp-height rows
+ * (align=top), squash the whole build onto the comp (align=stretch), or scale
+ * to cover and center-crop (align=cover, the way `object-fit: cover` will show
+ * a plate whose aspect differs from its region).
+ */
 export function alignBuild(comp, build, align = 'top') {
   if (align === 'stretch') return resize(build, comp.width, comp.height);
+  if (align === 'cover') {
+    const s = Math.max(comp.width / build.width, comp.height / build.height);
+    const scaled = resize(build, build.width * s, build.height * s);
+    return crop(scaled, (scaled.width - comp.width) / 2, (scaled.height - comp.height) / 2, comp.width, comp.height);
+  }
   const scaled = build.width === comp.width ? build : resize(build, comp.width, Math.round((build.height / build.width) * comp.width));
   if (scaled.height === comp.height) return scaled;
   if (scaled.height > comp.height) return crop(scaled, 0, 0, comp.width, comp.height);
@@ -191,9 +201,9 @@ export function renderRegionPair(compCrop, buildCrop, id, score) {
   return out;
 }
 
-export function compare({ comp, build, spec = null, align = 'top', label = '' }) {
+export function compare({ comp, build, spec = null, align = 'top', label = '', kind = null }) {
   const aligned = alignBuild(comp, build, align);
-  const whole = scorePair(comp, aligned);
+  const whole = scorePair(comp, aligned, kind);
   const regions = resolveRegions(comp, spec).map((r) => {
     const a = regionCrop(comp, r), b = regionCrop(aligned, r);
     const s = scorePair(a, b, r.kind);

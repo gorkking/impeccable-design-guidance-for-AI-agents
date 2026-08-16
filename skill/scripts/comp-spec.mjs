@@ -156,7 +156,7 @@ export function platePrompt(spec, region) {
     `Preserve silhouette, composition, perspective, palette (${world}), lighting, material, and texture exactly.`,
     'Remove every piece of UI text, label, caption, button, and interface chrome that is not part of the artwork itself.',
     'Remove letterboxing, borders, card corners, drop shadows, and any layout background that the page will draw in code.',
-    'Do not add objects. Do not change the concept. Do not restyle. Fill the whole frame; no margins.',
+    'Do not add objects. Do not change the concept. Do not restyle. The artwork fills the whole frame edge to edge at the same scale as the reference; no margins, no border, no background band.',
     region.note ? `Region: ${region.note}.` : '',
   ].filter(Boolean).join(' ');
 }
