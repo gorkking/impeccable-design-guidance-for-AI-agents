@@ -90,7 +90,8 @@
  */
 
 import crypto from 'node:crypto';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   approvedPoolRevision,
@@ -666,6 +667,36 @@ ${restated}
 `;
 }
 
+/**
+ * What the model must do next, once a direction (or surface structure) is
+ * chosen. Read from the same config the boot directive reads:
+ * `.impeccable/config.local.json` over `.impeccable/config.json`,
+ * `buildPath` comp|code; with neither, comp-led whenever image generation
+ * exists (an OpenAI key here; a harness-native image tool is invisible to
+ * this script, so the text names it too), code-led otherwise.
+ */
+export function nextStepAfterChoice({ key, scope, cwd = process.cwd(), env = process.env } = {}) {
+  let buildPath = null;
+  for (const name of ['config.json', 'config.local.json']) {
+    try {
+      const raw = JSON.parse(readFileSync(resolve(cwd, '.impeccable', name), 'utf8'));
+      if (raw?.buildPath === 'comp' || raw?.buildPath === 'code') buildPath = raw.buildPath;
+    } catch { /* absent */ }
+  }
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const scripts = relative(cwd, scriptsDir) || '.';
+  const imageGen = !!env.OPENAI_API_KEY;
+  const seed = key ? ` --direction ${key}` : '';
+  if (buildPath === 'code') {
+    return `NEXT (code-led, from .impeccable config): write the direction contract, then build; no comp round. Load reference/new-work.md section 5 and 6.\n`;
+  }
+  const why = buildPath === 'comp' ? 'from .impeccable config' : imageGen ? 'default: image generation is available' : 'default: comp-led unless no image tool exists; if your harness truly has none and there is no OpenAI key, this is code-led and you say so in one line';
+  if (scope === 'surface') {
+    return `NEXT (comp-led, ${why}): the locked card's comp is the approved comp. Run: node ${scripts}/build-phase.mjs start --comp <that comp> and follow its NEXT lines. Do not write page code before build-phase.mjs advance has closed the spec, plates, and hero gates.\n`;
+  }
+  return `NEXT (comp-led, ${why}): the world is chosen; the composition is not. Run: node ${scripts}/build-phase.mjs start${seed} and follow its NEXT lines: it opens the comps phase (three comps under .impeccable/mocks/, one approved by the user through the decision page or structured question, sidecar "approved": true), then spec, plates, hero, sections, motion, responsive, review. Do not write page code before those gates close. Reference: reference/visualize.md for the comp round.\n`;
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const fromIdx = args.indexOf('--from');
@@ -692,6 +723,16 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         register: registerIdx !== -1 ? args[registerIdx + 1] : undefined,
       });
       process.stdout.write(sent ? 'choice recorded\n' : 'choice ping skipped\n');
+      // The choice is resolved; this is the last script output the model
+      // reads before it decides what to do next, and every run that skipped
+      // the comp round did so right here: prose 20 KB into new-work.md lost
+      // to "direction locked, building now". So the ping prints the next
+      // mandatory step from the recorded build path, and the phase machine
+      // takes it from there.
+      process.stdout.write(nextStepAfterChoice({
+        key: fromIdx !== -1 ? args[fromIdx + 1] : undefined,
+        scope: scopeIdx !== -1 ? args[scopeIdx + 1] : undefined,
+      }));
     } else {
       // Mechanical init gate: prose alone does not keep a model from dealing
       // before init, and fresh repos produced exactly that skip (the model

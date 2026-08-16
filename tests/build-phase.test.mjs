@@ -66,6 +66,57 @@ describe('comp-spec', () => {
   });
 });
 
+describe('build-phase comps phase (start --direction)', () => {
+  let dir;
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'build-phase-comps-'));
+    fs.mkdirSync(path.join(dir, '.impeccable', 'mocks', 'decision'), { recursive: true });
+  });
+  after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
+
+  it('opens at comps, refuses with fewer than three sidecar\'d comps or no approval, then records the approved comp', () => {
+    let res = run(PHASE_SCRIPT, ['start', '--direction', 'abcd1234'], dir);
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /BUILD-PHASE COMPS/);
+    assert.match(res.stdout, /direction abcd1234/);
+    assert.match(res.stdout, /NEXT Comp round/);
+    res = run(PHASE_SCRIPT, ['advance'], dir);
+    assert.equal(res.status, 2);
+    assert.match(res.stdout, /0 comps under/);
+    // three comps, one without sidecar, none approved
+    const comp = makeComp();
+    for (const n of ['a', 'b', 'c']) fs.writeFileSync(path.join(dir, '.impeccable', 'mocks', `comp-${n}.png`), encodePng(comp));
+    // a decision-round comp must not count
+    fs.writeFileSync(path.join(dir, '.impeccable', 'mocks', 'decision', 'card.png'), encodePng(comp));
+    fs.writeFileSync(path.join(dir, '.impeccable', 'mocks', 'comp-a.png.json'), JSON.stringify({ prompt: 'a' }));
+    fs.writeFileSync(path.join(dir, '.impeccable', 'mocks', 'comp-b.png.json'), JSON.stringify({ prompt: 'b' }));
+    res = run(PHASE_SCRIPT, ['advance'], dir);
+    assert.equal(res.status, 2);
+    assert.match(res.stdout, /no prompt sidecar for: comp-c.png/);
+    assert.match(res.stdout, /no comp is approved/);
+    fs.writeFileSync(path.join(dir, '.impeccable', 'mocks', 'comp-c.png.json'), JSON.stringify({ prompt: 'c' }));
+    fs.writeFileSync(path.join(dir, '.impeccable', 'mocks', 'comp-b.png.json'), JSON.stringify({ prompt: 'b', approved: true }));
+    res = run(PHASE_SCRIPT, ['advance'], dir);
+    assert.equal(res.status, 0, res.stdout);
+    assert.match(res.stdout, /ADVANCED comps -> spec/);
+    const state = JSON.parse(fs.readFileSync(path.join(dir, '.impeccable', 'build', 'state.json'), 'utf8'));
+    assert.equal(state.comp, path.join('.impeccable', 'mocks', 'comp-b.png'));
+    assert.equal(state.breakpoint, '640x400');
+    assert.equal(state.phases.comps.status, 'closed');
+  });
+
+  it('start --comp skips the comps phase and records why', () => {
+    const d2 = fs.mkdtempSync(path.join(os.tmpdir(), 'build-phase-comps2-'));
+    fs.writeFileSync(path.join(d2, 'comp.png'), encodePng(makeComp()));
+    const res = run(PHASE_SCRIPT, ['start', '--comp', 'comp.png'], d2);
+    assert.equal(res.status, 0, res.stderr);
+    const state = JSON.parse(fs.readFileSync(path.join(d2, '.impeccable', 'build', 'state.json'), 'utf8'));
+    assert.equal(state.phase, 'spec');
+    assert.equal(state.phases.comps.status, 'skipped');
+    fs.rmSync(d2, { recursive: true, force: true });
+  });
+});
+
 describe('build-phase state machine (CLI)', () => {
   let dir;
   before(() => {
@@ -151,6 +202,38 @@ describe('build-phase state machine (CLI)', () => {
     const state = JSON.parse(fs.readFileSync(path.join(dir, '.impeccable', 'build', 'state.json'), 'utf8'));
     assert.equal(state.phases.hero.attempts, 3);
     assert.ok(state.phases.hero.gate.score >= 0.72);
+  });
+
+  it('hero gate lists region crops first on failure and refuses a third value-only attempt on the same region', () => {
+    // fresh project at hero with a stuck build
+    const d3 = fs.mkdtempSync(path.join(os.tmpdir(), 'build-phase-hero-'));
+    const comp = makeComp();
+    fs.writeFileSync(path.join(d3, 'comp.png'), encodePng(comp));
+    fs.writeFileSync(path.join(d3, 'regions.json'), JSON.stringify({ regions: [
+      { id: 'masthead', kind: 'chrome', grid: 'A0:J0' },
+      { id: 'art', kind: 'plate', grid: 'F1:J4' },
+      { id: 'list', kind: 'control', grid: 'A5:J9' },
+    ] }));
+    run(PHASE_SCRIPT, ['start', '--comp', 'comp.png', '--artifact', 'index.html'], d3);
+    run(SPEC_SCRIPT, ['--comp', 'comp.png', '--regions', 'regions.json'], d3);
+    run(PHASE_SCRIPT, ['advance'], d3);
+    run(SPEC_SCRIPT, ['--crop', 'art', '--scale', '2', '--out', 'assets/plates/art.png'], d3);
+    run(PHASE_SCRIPT, ['advance'], d3);
+    fs.writeFileSync(path.join(d3, 'index.html'), '<img src="assets/plates/art.png"><style>.a{padding:1px}</style>');
+    const flat = createImage(comp.width, comp.height, [240, 237, 226, 255]);
+    fillRect(flat, 0, 0, comp.width, 40, [19, 33, 48, 255]);
+    fs.mkdirSync(path.join(d3, '.impeccable', 'review'), { recursive: true });
+    fs.writeFileSync(path.join(d3, '.impeccable', 'review', 'hero-repro.png'), encodePng(flat));
+    let res;
+    for (let i = 0; i < 3; i++) {
+      fs.writeFileSync(path.join(d3, 'index.html'), `<img src="assets/plates/art.png"><style>.a{padding:${i + 1}px}</style>`);
+      res = run(PHASE_SCRIPT, ['advance'], d3);
+      assert.equal(res.status, 2);
+    }
+    assert.match(res.stdout, /LOOK FIRST/);
+    assert.match(res.stdout, /regions\/art\.png/);
+    assert.match(res.stdout, /three attempts/);
+    fs.rmSync(d3, { recursive: true, force: true });
   });
 
   it('later phases advance without a gate; force is recorded; finish records the disposition', () => {

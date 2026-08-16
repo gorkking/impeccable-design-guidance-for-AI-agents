@@ -5,6 +5,10 @@
  *
  * State lives at .impeccable/build/state.json. Phases, in order:
  *
+ *   comps     the comp round: three comps of the chosen direction under
+ *             .impeccable/mocks/ with prompt sidecars, one approved by the
+ *             user (sidecar "approved": true). Skipped when start names an
+ *             approved --comp (a surface round already locked one).
  *   spec      the approved comp is measured (comp-spec.mjs wrote spec.json)
  *   plates    every raster region in the spec has its plate on disk
  *   hero      the first viewport is reproduced: comp-diff of hero-repro.png
@@ -15,6 +19,7 @@
  *   review    the finish reviewer ran; disposition recorded
  *
  *   node build-phase.mjs start --comp <approved.png> [--breakpoint 1440x900] [--artifact index.html]
+ *   node build-phase.mjs start --direction <seed key>      # no comp yet: opens the comps phase first
  *   node build-phase.mjs status                # human-readable, plus NEXT line
  *   node build-phase.mjs status --json
  *   node build-phase.mjs advance               # try to close the current phase; runs its gate
@@ -24,6 +29,10 @@
  *   node build-phase.mjs finish --disposition ship|fix|rebuild|recapture
  *
  * Gates:
+ *   comps     -> >= 3 comp rasters (png/webp/jpg) directly under
+ *                .impeccable/mocks/ (decision/ excluded), each with a .json
+ *                sidecar, and exactly one sidecar carrying "approved": true;
+ *                closing records that file as the state's comp.
  *   spec      -> spec.json exists and has >= 1 region
  *   plates    -> every region with medium raster has its plate file, decodable,
  *                at least 2x the comp region's pixel size in width, and the
@@ -47,14 +56,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { decodePng } from './lib/png.mjs';
+const require = createRequire(import.meta.url);
 import { crop } from './lib/raster.mjs';
 import { compare, verdictFor } from './comp-diff.mjs';
 import { SPEC_PATH, BUILD_DIR, loadSpec } from './comp-spec.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const STATE_PATH = path.join(BUILD_DIR, 'state.json');
-export const PHASES = ['spec', 'plates', 'hero', 'sections', 'motion', 'responsive', 'review'];
+export const PHASES = ['comps', 'spec', 'plates', 'hero', 'sections', 'motion', 'responsive', 'review'];
+export const MOCKS_DIR = path.join('.impeccable', 'mocks');
 export const HERO_MIN = 0.72;
 export const PLATE_MIN = 0.5;
 export const HERO_REPRO = path.join('.impeccable', 'review', 'hero-repro.png');
@@ -78,21 +90,53 @@ export function saveState(state, statePath = STATE_PATH) {
   fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
 }
 
-export function newState({ comp, breakpoint = null, artifact = null }) {
+export function newState({ comp = null, breakpoint = null, artifact = null, direction = null }) {
+  const first = comp ? 'spec' : 'comps';
+  const phases = Object.fromEntries(PHASES.map((p) => [p, { status: p === first ? 'open' : 'pending', openedAt: p === first ? now() : null, closedAt: null, attempts: 0, notes: [], gate: null, forced: null }]));
+  if (comp) { phases.comps.status = 'skipped'; phases.comps.notes.push({ at: now(), text: 'started with an approved comp; the comp round happened before this state (surface round or manual)' }); }
   return {
     tool: 'build-phase',
-    version: 1,
+    version: 2,
     startedAt: now(),
     comp,
+    direction,
     breakpoint,
     artifact,
-    phase: 'spec',
-    phases: Object.fromEntries(PHASES.map((p) => [p, { status: p === 'spec' ? 'open' : 'pending', openedAt: p === 'spec' ? now() : null, closedAt: null, attempts: 0, notes: [], gate: null, forced: null }])),
+    phase: first,
+    phases,
     finish: null,
   };
 }
 
 // ---- gates -----------------------------------------------------------------
+
+/** Comp rasters directly under the mocks dir, with their sidecars. */
+export function listComps(mocksDir = MOCKS_DIR) {
+  if (!fs.existsSync(mocksDir)) return [];
+  const out = [];
+  for (const name of fs.readdirSync(mocksDir)) {
+    if (!/\.(png|webp|jpe?g)$/i.test(name)) continue;
+    const file = path.join(mocksDir, name);
+    if (!fs.statSync(file).isFile()) continue;
+    const sidecarPath = `${file}.json`;
+    let sidecar = null;
+    if (fs.existsSync(sidecarPath)) { try { sidecar = JSON.parse(fs.readFileSync(sidecarPath, 'utf8')); } catch { sidecar = null; } }
+    out.push({ file, sidecarPath, sidecar, approved: !!(sidecar && sidecar.approved === true) });
+  }
+  return out;
+}
+
+export function gateComps(state, { mocksDir = MOCKS_DIR } = {}) {
+  const comps = listComps(mocksDir);
+  const reasons = [];
+  if (comps.length < 3) reasons.push(`${comps.length} comp${comps.length === 1 ? '' : 's'} under ${mocksDir}; the comp round puts three compositional options of the chosen direction in front of the user (reference/visualize.md). Generate the missing ones (harness image tool or generate-image.mjs), each with a .json sidecar holding its prompt.`);
+  const noSidecar = comps.filter((c) => !c.sidecar);
+  if (noSidecar.length) reasons.push(`no prompt sidecar for: ${noSidecar.map((c) => path.basename(c.file)).join(', ')} (write <file>.json with { "prompt": "..." }; generate-image.mjs does this itself)`);
+  const approved = comps.filter((c) => c.approved);
+  if (approved.length === 0) reasons.push('no comp is approved: put the three comps in front of the user (decision page via serve-question.mjs, or the structured question tool), then set "approved": true in the chosen comp\'s sidecar. A delegated pick is recorded the same way and disclosed.');
+  if (approved.length > 1) reasons.push(`${approved.length} comps carry "approved": true; exactly one is the approved comp: ${approved.map((c) => path.basename(c.file)).join(', ')}`);
+  return { ok: reasons.length === 0, reasons, summary: `${comps.length} comps, ${approved.length} approved`, approved: approved.length === 1 ? approved[0].file : null };
+}
 
 export function gateSpec(state, { specPath = SPEC_PATH } = {}) {
   const spec = loadSpec(specPath);
@@ -197,6 +241,8 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   for (const r of missing) reasons.push(`region ${r.id} is missing (detail ${(r.score.detail * 100).toFixed(0)}%, structure ${(r.score.structure * 100).toFixed(0)}%): the comp shows material the build does not`);
   const contradicted = report.regions.filter((r) => r.verdict === 'contradicted');
   if (contradicted.length > Math.max(1, Math.floor(report.regions.length / 3))) reasons.push(`${contradicted.length} of ${report.regions.length} regions contradicted: ${contradicted.map((r) => r.id).join(', ')}`);
+  const worstRegions = [...report.regions].sort((a, b) => a.score.overall - b.score.overall).slice(0, 3);
+  const regionDir = path.join(outDir, 'regions');
   return {
     ok: reasons.length === 0,
     reasons,
@@ -205,11 +251,44 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
     verdict: report.verdict,
     report: path.join(outDir, 'report.json'),
     sideBySide: report.files ? report.files.sideBySide : null,
-    worst: [...report.regions].sort((a, b) => a.score.overall - b.score.overall).slice(0, 3).map((r) => `${r.id} ${r.verdict} ${(r.score.overall * 100).toFixed(0)}%`),
+    worst: worstRegions.map((r) => `${r.id} ${r.verdict} ${(r.score.overall * 100).toFixed(0)}%`),
+    worstIds: worstRegions.map((r) => r.id),
+    worstCrops: worstRegions.map((r) => ({ id: r.id, verdict: r.verdict, score: r.score, file: path.join(regionDir, `${r.id}.png`) })),
+    regionVerdicts: Object.fromEntries(report.regions.map((r) => [r.id, r.verdict])),
   };
 }
 
-const GATES = { spec: gateSpec, plates: gatePlates, hero: gateHero };
+/**
+ * The hero attempt loop: after two failed advances where the same region is
+ * still missing/contradicted and the artifact changed only in CSS values,
+ * refuse a third of the same kind. Missing material is not a layout
+ * tolerance problem; the fix is a plate, a placed plate, or a rebuilt region.
+ */
+export function heroLoopVerdict(state, gate, artifactPath) {
+  const p = state.phases.hero;
+  const history = p.history || [];
+  const entry = { at: now(), score: gate.score ?? null, worstIds: gate.worstIds || [], regionVerdicts: gate.regionVerdicts || {}, artifactHash: hashFile(artifactPath) };
+  history.push(entry);
+  p.history = history.slice(-6);
+  if (history.length < 3) return null;
+  const last3 = history.slice(-3);
+  const stuck = last3[0].worstIds[0] && last3.every((h) => h.worstIds[0] === last3[0].worstIds[0]);
+  const scores = last3.map((h) => h.score ?? 0);
+  const noProgress = Math.max(...scores) - Math.min(...scores) < 0.03;
+  if (stuck && noProgress) {
+    return `region ${last3[0].worstIds[0]} has been the worst region for three attempts and the score moved less than 3 points: value edits are not reaching it. Open ${path.join('.impeccable', 'review', 'diff', 'hero', 'regions', `${last3[0].worstIds[0]}.png`)} and rebuild that region from the comp crop (place its plate, or produce one with generate-image.mjs --plate, or re-derive its structure from the spec box), then recapture.`;
+  }
+  return null;
+}
+
+function hashFile(file) {
+  try {
+    const crypto = require('node:crypto');
+    return crypto.createHash('sha1').update(fs.readFileSync(file)).digest('hex').slice(0, 12);
+  } catch { return null; }
+}
+
+const GATES = { comps: gateComps, spec: gateSpec, plates: gatePlates, hero: gateHero };
 
 // ---- transitions -----------------------------------------------------------
 
@@ -239,9 +318,17 @@ export function advance(state, { force = false, reason = null, gateOpts = {} } =
     p.status = 'open';
     return { ok: false, phase, reasons: [...gate.reasons, `--force refused: "${reason || ''}" does not quote the user downgrading the comp. A single-file deliverable, a missing tool, or difficulty is not a reason; embed the plate as a data URI, produce it with the harness image tool, or ask the user.`], gate };
   }
+  if (phase === 'hero' && (gate.score != null)) {
+    const stuck = heroLoopVerdict(state, gate, gateOpts.artifact || state.artifact || 'index.html');
+    if (stuck && !gate.ok) gate.reasons = [stuck, ...gate.reasons];
+  }
   if (!gate.ok && !force) { p.status = 'open'; return { ok: false, phase, reasons: gate.reasons, gate }; }
   if (!gate.ok && force) p.forced = { at: now(), reason, reasons: gate.reasons };
   p.status = 'closed'; p.closedAt = now();
+  if (phase === 'comps' && gate.approved) {
+    state.comp = gate.approved;
+    if (!state.breakpoint) { try { const i = decodePng(fs.readFileSync(gate.approved)); state.breakpoint = `${i.width}x${i.height}`; } catch { /* non-png comp: breakpoint stays unset */ } }
+  }
   const next = PHASES[idx + 1];
   state.phase = next;
   state.phases[next].status = 'open'; state.phases[next].openedAt = now();
@@ -250,9 +337,10 @@ export function advance(state, { force = false, reason = null, gateOpts = {} } =
 
 export function nextInstruction(state) {
   switch (state.phase) {
+    case 'comps': return `Comp round for the chosen direction${state.direction ? ` (seed ${state.direction})` : ''}: read reference/visualize.md, generate three compositional comps of the requested surface at its own viewport into ${MOCKS_DIR}/ (each with a prompt sidecar), put them in front of the user, and set "approved": true in the chosen comp's sidecar. Then build-phase.mjs advance. No page code before this closes.`;
     case 'spec': return `Measure the comp: node comp-spec.mjs --comp ${state.comp} --grid, open ${path.join(BUILD_DIR, 'comp-grid.png')}, write regions.json (every illustration, photo, texture as its own plate region), run comp-spec.mjs --comp ${state.comp} --regions regions.json, then build-phase.mjs advance.`;
     case 'plates': return 'Produce every plate in the spec (comp-spec.mjs --print lists them): comp-spec.mjs --crop <id>, then generate-image.mjs --plate <id> (or the harness image tool with the crop as reference and the comp-spec plate prompt). Then build-phase.mjs advance. Write no page code before this passes.';
-    case 'hero': return `Build only the first viewport at ${state.breakpoint || 'the comp size'} using the plates and the spec's boxes and palette; capture it into ${HERO_REPRO}; run build-phase.mjs advance. Fix the worst regions it names and re-run; do not build past the hero until it passes.`;
+    case 'hero': return `Build only the first viewport at ${state.breakpoint || 'the comp size'}, plates first: place every plate at its spec box (comp-spec.mjs --print lists boxes as percentages of the viewport) with object-fit: cover before writing a line of text or a control, capture into ${HERO_REPRO}, and advance once so the gate reads the material; then lay the semantic layer (text, controls, rules) over the plates from the spec's palette and boxes, capture, advance. When it fails, open the region crops it lists first, in order, then fix; do not build past the hero until it passes.`;
     case 'sections': return 'Build the remaining sections inside the spec system (same corner language, rules, and palette; nothing the comp does not show). Then build-phase.mjs advance.';
     case 'motion': return 'Add the signature interaction, reveals, and motion. Then build-phase.mjs advance.';
     case 'responsive': return 'Build the other viewports (mobile first if the surface is mobile). Capture desktop.png and mobile.png into .impeccable/review/. Then build-phase.mjs advance.';
@@ -262,7 +350,7 @@ export function nextInstruction(state) {
 }
 
 export function renderStatus(state) {
-  const lines = [`BUILD-PHASE ${state.phase.toUpperCase()}  comp ${state.comp}${state.breakpoint ? `  breakpoint ${state.breakpoint}` : ''}`];
+  const lines = [`BUILD-PHASE ${state.phase.toUpperCase()}  comp ${state.comp || '(pending comp round)'}${state.direction ? `  direction ${state.direction}` : ''}${state.breakpoint ? `  breakpoint ${state.breakpoint}` : ''}`];
   for (const p of PHASES) {
     const s = state.phases[p];
     let line = `  ${p.padEnd(11)} ${s.status.padEnd(8)}`;
@@ -284,16 +372,18 @@ async function main() {
   }
   if (cmd === 'start') {
     const comp = arg('comp');
-    if (!comp || !fs.existsSync(comp)) { console.error('build-phase: --comp <approved comp png> is required and must exist'); process.exit(1); }
+    const direction = arg('direction');
+    if (!comp && !direction) { console.error('build-phase: start needs --comp <approved comp png> (comp already approved) or --direction <seed key> (comp round still to run)'); process.exit(1); }
+    if (comp && !fs.existsSync(comp)) { console.error(`build-phase: comp ${comp} does not exist`); process.exit(1); }
     let breakpoint = arg('breakpoint');
-    if (!breakpoint) { try { const i = decodePng(fs.readFileSync(comp)); breakpoint = `${i.width}x${i.height}`; } catch { /* leave null */ } }
+    if (!breakpoint && comp) { try { const i = decodePng(fs.readFileSync(comp)); breakpoint = `${i.width}x${i.height}`; } catch { /* leave null */ } }
     const existing = loadState();
     if (existing && !flag('reset')) {
       console.log(`build-phase: state exists (phase ${existing.phase}); pass --reset to start over`);
       console.log(renderStatus(existing));
       return;
     }
-    const state = newState({ comp, breakpoint, artifact: arg('artifact') });
+    const state = newState({ comp, breakpoint, artifact: arg('artifact'), direction });
     saveState(state);
     console.log(renderStatus(state));
     return;
@@ -333,9 +423,13 @@ async function main() {
     saveState(state);
     if (!res.ok) {
       console.log(`GATE ${res.phase ? res.phase.toUpperCase() : ''} FAILED (state unchanged)`);
+      if (res.gate && res.gate.worstCrops && res.gate.worstCrops.length) {
+        console.log('  LOOK FIRST, in this order, before editing anything (comp on the left, your build on the right):');
+        for (const c of res.gate.worstCrops) console.log(`    ${c.file}   ${c.id}: ${c.verdict} ${(c.score.overall * 100).toFixed(0)}% (structure ${(c.score.structure * 100).toFixed(0)}%, color ${(c.score.color * 100).toFixed(0)}%, detail ${(c.score.detail * 100).toFixed(0)}%)`);
+        console.log('  A region scored missing needs its material (a plate placed, or produced), not a value change; contradicted needs its structure re-derived from the spec box; drift is where padding and size edits belong.');
+      }
       for (const r of res.reasons) console.log(`  - ${r}`);
-      if (res.gate && res.gate.worst) console.log(`  worst: ${res.gate.worst.join('; ')}`);
-      if (res.gate && res.gate.sideBySide) console.log(`  open ${res.gate.sideBySide} and the worst region pairs before editing`);
+      if (res.gate && res.gate.sideBySide) console.log(`  then ${res.gate.sideBySide} for the whole viewport`);
       process.exit(2);
     }
     console.log(`ADVANCED ${res.phase} -> ${res.next}${res.forced ? ' (FORCED; recorded)' : ''}${res.gate.summary ? `  ${res.gate.summary}` : ''}`);
