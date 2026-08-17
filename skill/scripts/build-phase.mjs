@@ -408,7 +408,7 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
     const compAspect = cw / ch, buildAspect = bw / bh;
     if (bw < cw * 0.9 || Math.abs(buildAspect - compAspect) / compAspect > 0.08) reasons.push(`hero capture is ${bw}x${bh}; the comp is ${cw}x${ch}. Capture the first viewport at the comp's own dimensions (viewport ${cw}x${ch}, not full page) into ${buildPath}.`);
   }
-  if (report.overall < min) reasons.push(`hero overall ${(report.overall * 100).toFixed(0)}% < ${(min * 100).toFixed(0)}% (structure ${(report.scores.structure * 100).toFixed(0)}%, color ${(report.scores.color * 100).toFixed(0)}%, detail ${(report.scores.detail * 100).toFixed(0)}%)`);
+  if (report.overall < min) reasons.push(`hero overall ${(report.overall * 100).toFixed(1)}% < ${(min * 100).toFixed(0)}% (structure ${(report.scores.structure * 100).toFixed(0)}%, color ${(report.scores.color * 100).toFixed(0)}%, detail ${(report.scores.detail * 100).toFixed(0)}%)`);
   if (report.scores.colorIntersection != null && report.scores.colorIntersection < 0.2) reasons.push(`the palette is not the comp's (color intersection ${(report.scores.colorIntersection * 100).toFixed(0)}%): comp ${(report.palette.comp || []).slice(0, 3).map((c) => c.hex).join(' ')} vs build ${(report.palette.build || []).slice(0, 3).map((c) => c.hex).join(' ')}. Use the spec's sampled palette values, not a rendition of them.`);
   // A texture band that shares its box with a text/control region carries
   // that region's ink in the comp crop; when the overlapping ink regions are
@@ -500,6 +500,7 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   // size, weight, colour, or place; a nav bar too tall; ink where the comp
   // has none (a kicker, a divider, a second row). Each was a pin in the
   // first human review of builds the region scores had passed.
+  const advisories = [];
   let readings = null;
   try { readings = heroReadings(state, specForRefs, buildPath); } catch (e) { reasons.push(`hero readings errored (${e.message}); the region scores above stand`); }
   if (readings) {
@@ -507,10 +508,20 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
     // pass (the worst first: size, then lines, then colour and place)
     const order = (f) => (/cap height/.test(f) ? 0 : /lines? in the build/.test(f) ? 1 : /heavier|lighter/.test(f) ? 2 : /ink is/.test(f) ? 3 : 4);
     const text = [...readings.text].sort((a, b) => order(a) - order(b));
-    const kept = text.slice(0, 8);
-    if (kept.length) reasons.push(`READINGS, each one CSS edit (${text.length > kept.length ? `${kept.length} of ${text.length}, the rest after these` : `${kept.length}`}):`);
+    // A reading that has come back unchanged three attempts running is one
+    // the session is not acting on (or cannot: a measured "rule" that is
+    // really an underline the layout does not have). It stays in the message
+    // as advisory and stops blocking; the fresh readings still do. One
+    // session spent 27 attempts on the same three lines.
+    const seen = state.phases.hero.readingsSeen || (state.phases.hero.readingsSeen = {});
+    const stale = (f) => { const k = f.replace(/\s+/g, ' ').trim(); seen[k] = (seen[k] || 0) + 1; return seen[k] > 3; };
+    const all = [...text, ...readings.chrome];
+    const fresh = all.filter((f) => !stale(f));
+    const advisory = all.filter((f) => !fresh.includes(f));
+    const kept = fresh.slice(0, 8);
+    if (kept.length) reasons.push(`READINGS, each one CSS edit (${fresh.length > kept.length ? `${kept.length} of ${fresh.length}, the rest after these` : `${kept.length}`}):`);
     for (const f of kept) reasons.push(f);
-    for (const f of readings.chrome) reasons.push(f);
+    if (advisory.length) advisories.push(...advisory.map((f) => `(advisory, unchanged for 3+ attempts) ${f}`));
     if (readings.invented && readings.invented.fraction >= INVENTED_MIN) {
       const cells = readings.invented.cells.map((c) => c.label);
       reasons.push(`the build carries ink in ${cells.length} grid cells where the comp is calm (${cells.slice(0, 12).join(', ')}${cells.length > 12 ? ', ...' : ''}); nothing exists on the page that the comp does not show (a kicker, an extra nav item, a divider, a second row of controls); remove it or name it in a stated decision after the hero passes`);
@@ -529,6 +540,7 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
     worst: worstRegions.map((r) => `${r.id} ${r.verdict} ${(r.score.overall * 100).toFixed(0)}%`),
     worstIds: worstRegions.map((r) => r.id),
     worstCrops: worstRegions.map((r) => ({ id: r.id, verdict: r.verdict, score: r.score, file: path.join(regionDir, `${r.id}.png`) })),
+    advisories,
     regionVerdicts: Object.fromEntries(report.regions.map((r) => [r.id, r.verdict])),
   };
 }
@@ -777,6 +789,7 @@ async function main() {
     if (plateRows.length) console.log(`PLATES ${plateRows.map(([id, v]) => `${id}:${v}`).join(' ')}`);
     console.log(`${gate.ok ? 'PASS' : 'FAIL'} ${gate.summary || ''} (record: nothing advanced)`);
     for (const r of gate.reasons) console.log(`  - ${r}`);
+    if (gate.advisories) for (const a of gate.advisories) console.log(`  ${a}`);
     if (gate.worst) console.log(`  worst: ${gate.worst.join('; ')}`);
     if (gate.sideBySide) console.log(`  open ${gate.sideBySide}`);
     process.exit(gate.ok ? 0 : 2);
@@ -796,10 +809,12 @@ async function main() {
         console.log('  A region scored missing needs its material (a plate placed, or produced), not a value change; contradicted needs its structure re-derived from the spec box; drift is where padding and size edits belong. When a thin chrome strip (masthead, breadcrumb, table header) is the worst region, check its box height in the spec against the comp first: a strip one grid row tall in the spec but 53px in the comp compares your build against ground it never had.');
       }
       for (const r of res.reasons) console.log(`  - ${r}`);
+      if (res.gate && res.gate.advisories && res.gate.advisories.length) for (const a of res.gate.advisories) console.log(`  ${a}`);
       if (res.gate && res.gate.sideBySide) console.log(`  then ${res.gate.sideBySide} for the whole viewport`);
       process.exit(2);
     }
     console.log(`ADVANCED ${res.phase} -> ${res.next}${res.forced ? ' (FORCED; recorded)' : ''}${res.gate.summary ? `  ${res.gate.summary}` : ''}`);
+    if (res.gate && res.gate.advisories && res.gate.advisories.length) for (const a of res.gate.advisories) console.log(`  ${a}`);
     console.log(`NEXT ${nextInstruction(state)}`);
     return;
   }

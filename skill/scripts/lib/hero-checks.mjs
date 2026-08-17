@@ -112,6 +112,13 @@ export function chromeStripCheck(region, compCrop, buildCrop) {
   const findings = [];
   const strip = compCrop.height <= compCrop.width * 0.35;
   if (!strip) return { findings };
+  // a control that is one link or one button, not a bar across its box, has
+  // no strip height to compare (its underline read as a 'rule' for 27
+  // attempts in one session)
+  if (region.kind === 'control') {
+    const ib = inkBox(compCrop);
+    if (!ib || ib.w < compCrop.width * 0.6) return { findings };
+  }
   const ra = ruleRows(compCrop), rb = ruleRows(buildCrop);
   if (ra.length && rb.length) {
     // the rule that closes the strip is the first one from the top (a grid
