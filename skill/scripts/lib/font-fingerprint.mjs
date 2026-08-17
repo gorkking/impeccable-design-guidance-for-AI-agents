@@ -88,8 +88,17 @@ function binarize(img) {
 /** Text lines from the row-ink profile (same rules as font-match v1). */
 function findLines(bin) {
   const { W, H, ink } = bin;
+  // Columns inked top to bottom (a rule, a black margin, a page edge) span
+  // every line and would fuse them into one run: leave them out of the row
+  // profile. Lettering never fills a column for more than ~85% of the crop.
+  const colInk = new Uint32Array(W);
+  for (let y = 0; y < H; y++) { const o = y * W; for (let x = 0; x < W; x++) colInk[x] += ink[o + x]; }
+  const colOk = new Uint8Array(W);
+  let okCount = 0;
+  for (let x = 0; x < W; x++) { if (colInk[x] < H * 0.85) { colOk[x] = 1; okCount++; } }
+  if (!okCount) return { lines: [], rowInk: new Uint32Array(H) };
   const rowInk = new Uint32Array(H);
-  for (let y = 0; y < H; y++) { let c = 0; const o = y * W; for (let x = 0; x < W; x++) c += ink[o + x]; rowInk[y] = c; }
+  for (let y = 0; y < H; y++) { let c = 0; const o = y * W; for (let x = 0; x < W; x++) if (colOk[x]) c += ink[o + x]; rowInk[y] = c; }
   const floor = Math.max(1, W * 0.004);
   const runs = [];
   let y = 0;

@@ -586,7 +586,17 @@ export function forceAllowed(reason) {
   // translation is what the gate measures; it is not a downgrade.
   const aboutComp = /\b(comp|mock|mockup|composition|fidelity|plate|region)\b/i.test(reason);
   const isTranslationDodge = /truthful|semantic|pixel-level|prioriti[sz]e (facts|semantics|accessibility)/i.test(reason) && !/(drop|skip|remove|without|not needed|don't need|do not need|ignore) (the )?(comp|plate|region|fidelity)/i.test(reason);
-  return namesUser && aboutComp && !isTranslationDodge;
+  // The user's words have to be a downgrade of the comp, said as such: a
+  // brief line quoted back ("should feel like an extension of her artwork")
+  // is the direction the comp already serves, not permission to leave it.
+  // One session forced two gates on that sentence. Ask for a downgrade verb
+  // in the same reason as the comp noun.
+  const downgrades = /\b(don't|do not|doesn't|does not|no longer|not) (need|have to|want|care|require|match|follow|hold)|\b(drop|skip|remove|ignore|waive|relax|override|approve|approved|accept|accepted|fine|okay|ok|good enough|ship it|move on|proceed|go ahead|instead of|rather than)\b/i.test(reason);
+  // and the user's words are quoted or reported, not paraphrased into a
+  // principle ("the user made the artwork binding" is the model's reading)
+  const reported = /["'\u201c\u2018].{6,}["'\u201d\u2019]|\b(user|they|paul) (said|says|asked|asks|told|wrote|replied|answered|chose|picked|approved|confirmed)\b/i.test(reason);
+  const briefQuoteOnly = /\b(should feel|feel like|not a .* page|extension of)\b/i.test(reason) && !/\b(comp|mock|fidelity|gate|plate)\b.*\b(approved|accept|fine|ok|okay|skip|drop|waive|relax|override|move on|proceed)\b/i.test(reason);
+  return namesUser && aboutComp && downgrades && reported && !isTranslationDodge && !briefQuoteOnly;
 }
 
 export function advance(state, { force = false, reason = null, gateOpts = {} } = {}) {
