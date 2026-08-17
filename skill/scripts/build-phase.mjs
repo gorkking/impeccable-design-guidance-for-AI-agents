@@ -415,7 +415,7 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
     // the material is there (grain reads flatter at capture scale); a plate
     // or image needs its own energy in the box
     const present = r.kind === 'texture'
-      ? (r.score.color >= 0.8 && r.score.structure >= 0.8)
+      ? (r.score.structure >= 0.85 && r.score.color >= 0.6)
       : (r.score.detailRaw != null ? r.score.detailRaw >= 0.3 : r.score.detail >= 0.3);
     if (!present) continue; // nothing drawn there: still missing
     r.verdict = 'drift';
