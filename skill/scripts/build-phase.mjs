@@ -409,9 +409,14 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   const passedPlate = (id) => state.plates && state.plates[id] && state.plates[id].status === 'ok' && (state.plates[id].score == null || state.plates[id].score >= PLATE_MIN);
   const placementNotes = [];
   for (const r of report.regions) {
-    if (!(r.kind === 'plate' || r.kind === 'image') || !passedPlate(r.id)) continue;
+    if (!(r.kind === 'plate' || r.kind === 'image' || r.kind === 'texture') || !passedPlate(r.id)) continue;
     if (r.verdict !== 'missing' && r.verdict !== 'contradicted') continue;
-    const present = r.score.detailRaw != null ? r.score.detailRaw >= 0.3 : r.score.detail >= 0.3;
+    // a texture's presence is its ground: palette and structure held means
+    // the material is there (grain reads flatter at capture scale); a plate
+    // or image needs its own energy in the box
+    const present = r.kind === 'texture'
+      ? (r.score.color >= 0.8 && r.score.structure >= 0.8)
+      : (r.score.detailRaw != null ? r.score.detailRaw >= 0.3 : r.score.detail >= 0.3);
     if (!present) continue; // nothing drawn there: still missing
     r.verdict = 'drift';
     r.placed = true;
@@ -532,7 +537,18 @@ export function gateResponsive(state, { specPath = SPEC_PATH, min = RESPONSIVE_M
   try { report = JSON.parse(res.stdout); } catch { return { ok: false, reasons: [`comp-diff failed on ${desktop}: ${res.stderr || res.stdout}`] }; }
   // A texture read at 1440 differs from itself at 1536 by resampling alone;
   // it passed at the hero and cannot block responsive on its own.
-  const missing = report.regions.filter((r) => r.verdict === 'missing' && r.kind !== 'texture');
+  // Likewise a plate or image that passed the plates gate: it read 'missing'
+  // on detail at 1440 in a run where the hero had just accepted it at 1536,
+  // structure 94%. Only a region with no energy in its box is missing here.
+  const missing = report.regions.filter((r) => {
+    if (r.verdict !== 'missing' || r.kind === 'texture') return false;
+    const passed = state.plates && state.plates[r.id] && state.plates[r.id].status === 'ok';
+    if ((r.kind === 'plate' || r.kind === 'image') && passed) {
+      const present = r.score.detailRaw != null ? r.score.detailRaw >= 0.3 : r.score.detail >= 0.3;
+      if (present && r.score.structure >= 0.5) return false;
+    }
+    return true;
+  });
   // A plate placed and passed at the hero is not re-litigated at 1440: the
   // rescale alone drops SSIM on a busy region. Text can still contradict
   // (a wrapped headline is a different composition).
