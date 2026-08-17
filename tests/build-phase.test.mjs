@@ -74,6 +74,16 @@ describe('comp-spec', () => {
     assert.equal(plate.regions[0].medium, 'raster');
   });
 
+  it('warns when a plate box cuts through its own artwork', () => {
+    // a black arch on paper, drawn wider than the region that names it
+    const comp = createImage(1000, 1000, [235, 232, 220, 255]);
+    fillRect(comp, 400, 100, 500, 800, [15, 15, 15, 255]);
+    const cut = measureRegions(comp, { allowUncovered: true, regions: [{ id: 'arch', kind: 'plate', box: { x: 0.5, y: 0, w: 0.5, h: 1 }, note: 'hand-cut black arch' }] }, 'c.png');
+    assert.ok(cut.warnings.some((w) => /region arch: the artwork runs off the box on the left/.test(w)), JSON.stringify(cut.warnings));
+    const whole = measureRegions(comp, { allowUncovered: true, regions: [{ id: 'arch', kind: 'plate', box: { x: 0.35, y: 0.05, w: 0.6, h: 0.9 }, note: 'hand-cut black arch' }] }, 'c.png');
+    assert.deepEqual(whole.warnings, []);
+  });
+
   it('refuses a code region that covers a column of the comp, unless container', () => {
     const comp = makeComp();
     assert.throws(() => measureRegions(comp, { allowUncovered: true, regions: [{ id: 'parts-column', kind: 'chrome', grid: 'G0:J9', note: 'right column of parts' }] }, 'c.png'), /covers 40% of the comp/);

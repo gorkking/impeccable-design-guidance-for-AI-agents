@@ -70,7 +70,7 @@ import { decodePng, loadRaster } from './lib/png.mjs';
 const require = createRequire(import.meta.url);
 import { crop, createImage, blit } from './lib/raster.mjs';
 import { compare, verdictFor, alignBuild, bestShift } from './comp-diff.mjs';
-import { textRegionCheck, chromeStripCheck, inventedInk } from './lib/hero-checks.mjs';
+import { textRegionCheck, chromeStripCheck, inventedInk, plateClipCheck } from './lib/hero-checks.mjs';
 import { SPEC_PATH, BUILD_DIR, loadSpec, plateReference } from './comp-spec.mjs';
 import { choiceStamped } from './font-match.mjs';
 
@@ -194,6 +194,9 @@ export function gateSpec(state, { specPath = SPEC_PATH } = {}) {
     return { ok: false, reasons: [`spec measures ${spec.comp}, but this build started on ${state.comp}; re-run comp-spec on the approved comp`] };
   }
   const plates = spec.regions.filter((r) => r.medium === 'raster').length;
+  // A plate box that cuts its artwork is a plate the page will crop.
+  const cut = spec.regions.filter((r) => r.medium === 'raster' && r.clipped && r.clipped.length);
+  if (cut.length) return { ok: false, reasons: cut.map((r) => `region ${r.id}: the comp's artwork runs off its box on the ${r.clipped.join(' and ')}; widen the region's span so the box holds the whole shape with a margin (or set "bleed": true if the page really crops it there), then re-run comp-spec.mjs --regions`) };
   // Type is measured, not guessed: the largest text region must carry a
   // font-match measurement and a ranked choice before page code exists.
   // Three of six misses a human called on a first-round build were the
@@ -373,15 +376,19 @@ export function heroReadings(state, spec, buildPath) {
   let aligned = alignBuild(comp, build, 'top');
   const shift = bestShift(comp, aligned);
   if (shift.dx || shift.dy) { const shifted = createImage(aligned.width, aligned.height, [255, 255, 255, 255]); blit(shifted, aligned, -shift.dx, -shift.dy); aligned = shifted; }
-  const text = [], chrome = [];
+  const text = [], chrome = [], plates = [];
   for (const r of spec.regions) {
     if (!r.px) continue;
     const a = crop(comp, r.px.x, r.px.y, r.px.w, r.px.h), b = crop(aligned, r.px.x, r.px.y, r.px.w, r.px.h);
     if (r.kind === 'text') { const t = textRegionCheck(r, a, b); text.push(...t.findings); }
     else if (r.kind === 'chrome' || r.kind === 'control') { const c = chromeStripCheck(r, a, b); chrome.push(...c.findings); }
+    else if (r.kind === 'plate' || r.kind === 'image') {
+      const c = plateClipCheck(r, a, b);
+      if (c.sides.length) plates.push(`plate ${r.id} is clipped at the ${c.sides.join(' and ')}: the comp's artwork keeps a margin there (ink box ${c.comp.w}x${c.comp.h} at ${c.comp.x},${c.comp.y} in the region) and the build's runs to the edge (${c.build.w}x${c.build.h} at ${c.build.x},${c.build.y}); size the box to the artwork's aspect and use object-fit: contain, or place the <img> at the artwork's own size, never cover on a narrower box`);
+    }
   }
   const invented = inventedInk(comp, aligned);
-  return { text, chrome, invented };
+  return { text, chrome, plates, invented };
 }
 
 export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, min = HERO_MIN, outDir = path.join('.impeccable', 'review', 'diff', 'hero'), artifact = null } = {}) {
@@ -522,7 +529,11 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
     if (kept.length) reasons.push(`READINGS, each one CSS edit (${fresh.length > kept.length ? `${kept.length} of ${fresh.length}, the rest after these` : `${kept.length}`}):`);
     for (const f of kept) reasons.push(f);
     if (advisory.length) advisories.push(...advisory.map((f) => `(advisory, unchanged for 3+ attempts) ${f}`));
-    if (readings.invented && readings.invented.fraction >= INVENTED_MIN) {
+    for (const f of readings.plates || []) reasons.push(f);
+    // invented ink: enough cells, or a couple of strongly inked ones (a
+    // legend, a badge, a second control in a calm corner)
+    const strongCells = (readings.invented ? readings.invented.cells : []).filter((c) => c.build >= 22);
+    if (readings.invented && (readings.invented.fraction >= INVENTED_MIN || strongCells.length >= 2)) {
       const cells = readings.invented.cells.map((c) => c.label);
       reasons.push(`the build carries ink in ${cells.length} grid cells where the comp is calm (${cells.slice(0, 12).join(', ')}${cells.length > 12 ? ', ...' : ''}); nothing exists on the page that the comp does not show (a kicker, an extra nav item, a divider, a second row of controls); remove it or name it in a stated decision after the hero passes`);
     }

@@ -88,10 +88,50 @@ function paletteOf(img) {
 }
 
 /** Words in a region note that name painted material rather than code-drawn UI. */
-export const PAINTED_NOTE = /\b(diagram|drawing|drawn|illustrat\w*|figure|schematic|exploded|photo\w*|picture|painting|painted|render\w*|artwork|engraving|etching|linework|line art|texture\w*|grain|paper|fabric|halftone|watercolou?r|sketch\w*|blueprint|technical geometry|carburetor geometry|product shot|hero image|3d)\b/i;
+export const PAINTED_NOTE = /\b(diagram|drawing|drawn|illustration|illustrations|illustrated|figure|schematic|exploded|photo|photos|photograph\w*|picture|painting|painted|render|rendered|rendering|artwork|engraving|etching|linework|line art|texture|textured|textures|grain|fabric|halftone|watercolou?r|sketch|sketched|blueprint|technical geometry|carburetor geometry|product shot|hero image|3d)\b/i;
 
 /** A text/control/chrome region larger than this fraction of the comp is a column, not an element. */
 export const MAX_CODE_REGION_AREA = 0.25;
+
+/** Fraction of an edge's length the artwork's dark mass has to touch to count as running off the box. */
+export const EDGE_CONTACT_MIN = 0.35;
+
+/**
+ * Which edges of a plate region crop the artwork touches. 'Artwork' is the
+ * region's non-ground mass: pixels far from the crop's median gray. A margin
+ * of paper along an edge means the shape ends inside the box; a long run of
+ * ink along it means the shape continues past it.
+ */
+export function artworkTouchesEdges(img, { contact = EDGE_CONTACT_MIN, band = 2, ground = null } = {}) {
+  const W = img.width, H = img.height;
+  const gray = new Float32Array(W * H);
+  for (let i = 0, j = 0; i < img.data.length; i += 4, j++) gray[j] = 0.299 * img.data[i] + 0.587 * img.data[i + 1] + 0.114 * img.data[i + 2];
+  // ground is the page's, not the crop's: a region that is mostly a black
+  // arch on paper has a mid-gray median and every edge reads as ink
+  if (ground == null) {
+    const sample = []; for (let i = 0; i < gray.length; i += Math.max(1, Math.floor(gray.length / 5000))) sample.push(gray[i]);
+    sample.sort((a, b) => a - b); ground = sample[Math.floor(sample.length / 2)];
+  }
+  const ink = (x, y) => Math.abs(gray[y * W + x] - ground) > 60;
+  const sides = [];
+  // the longest contiguous run of ink along the edge, as a fraction of it:
+  // an arch cut by the box leaves a long unbroken contact; grain, a rule
+  // crossing, or a line of small type leave short ones
+  const run = (n, at) => { let best = 0, cur = 0; for (let i = 0; i < n; i++) { if (at(i)) { cur++; if (cur > best) best = cur; } else cur = 0; } return best / n; };
+  if (run(H, (y) => { for (let x = 0; x < band; x++) if (ink(x, y)) return true; return false; }) >= contact) sides.push('left');
+  if (run(H, (y) => { for (let x = W - band; x < W; x++) if (ink(x, y)) return true; return false; }) >= contact) sides.push('right');
+  if (run(W, (x) => { for (let y = 0; y < band; y++) if (ink(x, y)) return true; return false; }) >= contact) sides.push('top');
+  if (run(W, (x) => { for (let y = H - band; y < H; y++) if (ink(x, y)) return true; return false; }) >= contact) sides.push('bottom');
+  return sides;
+}
+
+function medianGray(img) {
+  const sample = [];
+  const step = Math.max(1, Math.floor((img.width * img.height) / 6000));
+  for (let j = 0; j < img.width * img.height; j += step) { const i = j * 4; sample.push(0.299 * img.data[i] + 0.587 * img.data[i + 1] + 0.114 * img.data[i + 2]); }
+  sample.sort((a, b) => a - b);
+  return sample[Math.floor(sample.length / 2)];
+}
 
 function energyOf(img) {
   const g = detailGrid(img, 4, 4, 256);
@@ -129,7 +169,9 @@ export function uncoveredInkCells(comp, regions) {
 
 export function measureRegions(comp, regionsInput, compPath) {
   const regions = [];
+  const warnings = [];
   const seen = new Set();
+  const pageGround = medianGray(comp);
   for (const raw of regionsInput.regions || []) {
     if (!raw.id) throw new Error('every region needs an id');
     if (seen.has(raw.id)) throw new Error(`duplicate region id ${raw.id}`);
@@ -165,6 +207,15 @@ export function measureRegions(comp, regionsInput, compPath) {
     const c = crop(comp, px.x, px.y, px.w, px.h);
     const energy = energyOf(c);
     const raster = RASTER_KINDS.has(kind);
+    // A plate box that cuts through its own artwork is a plate the page will
+    // crop: object-fit: cover on that box shows the artwork with the side the
+    // box lost, and the hero passed a cover arch cut flat on the left and
+    // bleeding into the footer at 87%. Measure the artwork's edge contact
+    // and say it here, where the fix is a wider grid span.
+    // sides on the comp's own edge do not count: the comp crops there too
+    const atCompEdge = { left: px.x <= 1, top: px.y <= 1, right: px.x + px.w >= comp.width - 1, bottom: px.y + px.h >= comp.height - 1 };
+    const clipped = raster && kind !== 'texture' && !raw.bleed ? artworkTouchesEdges(c, { ground: pageGround }).filter((side) => !atCompEdge[side]) : [];
+    if (clipped.length) warnings.push(`region ${raw.id}: the artwork runs off the box on the ${clipped.join(' and ')} (its ink reaches the edge over ${EDGE_CONTACT_MIN * 100}% of that side). Widen the region so the box holds the whole shape with a margin; a plate placed with object-fit: cover on this box would be cut there.`);
     regions.push({
       id: raw.id,
       kind,
@@ -175,6 +226,7 @@ export function measureRegions(comp, regionsInput, compPath) {
       palette: paletteOf(c),
       detail: { energy: r4(energy) },
       medium: raw.medium || (raster ? 'raster' : 'semantic'),
+      clipped: clipped.length ? clipped : undefined,
       plate: raster ? (raw.plate || path.join(PLATES_DIR, `${raw.id}.png`)) : null,
       text: raw.text || null,
     });
@@ -188,6 +240,7 @@ export function measureRegions(comp, regionsInput, compPath) {
     version: 1,
     createdAt: new Date().toISOString(),
     comp: compPath,
+    warnings,
     uncoveredInkCells: uncovered,
     compSize: { width: comp.width, height: comp.height },
     aspect: r4(comp.width / comp.height),
@@ -264,6 +317,7 @@ export function printSpec(spec) {
   }
   const plates = spec.regions.filter((r) => r.medium === 'raster');
   lines.push(`PLATES ${plates.length} to produce: ${plates.map((r) => r.id).join(', ') || 'none'}`);
+  for (const w of spec.warnings || []) lines.push(`WARN ${w}`);
   lines.push('RULE anything not in this list does not exist on the page: no borders, rules, chrome, or containers the comp does not show. Every raster region ships as its plate, never as CSS.');
   return lines.join('\n');
 }

@@ -161,3 +161,24 @@ export function inventedInk(comp, build, { cols = 10, rows = 10, floor = 10, add
   }
   return { cells, fraction: cells.length / (cols * rows) };
 }
+
+/**
+ * A plate cropped by its box: the comp's artwork keeps a margin inside the
+ * region on some side and the build's ink runs flush to that edge (object-fit:
+ * cover on a box smaller than the artwork's aspect, or an <img> sized to the
+ * column). The best build of the fifth sweep passed the hero at 87% with the
+ * cover arch cut off at the left and bottom; the human review called it a
+ * bug in one word. Returns the sides clipped, or [].
+ */
+export function plateClipCheck(region, compCrop, buildCrop, { margin = 6 } = {}) {
+  const a = inkBox(compCrop), b = inkBox(buildCrop);
+  if (!a || !b) return { sides: [] };
+  const W = compCrop.width, H = compCrop.height;
+  const sides = [];
+  const flush = (v) => v <= 1;
+  if (a.x >= margin && flush(b.x)) sides.push('left');
+  if (a.y >= margin && flush(b.y)) sides.push('top');
+  if (W - (a.x + a.w) >= margin && flush(W - (b.x + b.w))) sides.push('right');
+  if (H - (a.y + a.h) >= margin && flush(H - (b.y + b.h))) sides.push('bottom');
+  return { sides, comp: a, build: b };
+}
