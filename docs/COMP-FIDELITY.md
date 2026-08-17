@@ -135,4 +135,19 @@ What the traces said, and what changed from them:
 - **The control ink-box veto blocked a full-width bar six times** ("1376x87 vs 1382x102"), unmovable by any edit. It now applies only to discrete controls.
 - **Plate generation polled turn by turn** (8 `write_stdin` empty polls per plate); the NEXT line now says to wait long.
 
-Not yet measured: the last three fixes landed after this sweep. Next: rerun sol at n=3 on the same packets to confirm the delta holds with fewer turns, then opus.
+## Fourth sweep (2026-08-17, gpt-5.6-sol, same packets, n=3 both arms, after the font/plate-placement/control-veto fixes)
+
+| Niche | main | branch | branch turns |
+|---|---|---|---|
+| 05-experimental-album | 52 / 43 / 50 | **64 / 63 / 58** | 101 (forced twice) / 79 / 29 (stopped at spec) |
+| 07-vintage-moto-forum | 53 / 44 / 48 | **62 / 68 / 64** | 86 / 101 / 54 (hero open at 63-67 in all three) |
+| 11-analytics-dashboard | 63 / 65 / 65 | **66 / 74 / 62** | 52 / 41 / 68 (all reached review; hero 74-75) |
+
+Branch over main on every niche, every sample; 11 now finishes the whole machine in 41-68 turns (was 68-101). The 07 hero sits at 63-68 against a 72 floor across five samples in two sweeps: that comp (a service-manual page with three plates and a rotated spine) is where the remaining points are, and the traces named the reasons:
+
+- A body-copy region measured at cap 160px off the carburetor drawing sharing its crop, and a track list measured at 389px because staff rules and a black page edge fused eight rows into one line. `font-fingerprint` now drops full-height inked columns from the row profile, sets tall non-text runs aside, and measures the lettering class holding the most ink (multi-line first). Both crops now read 15px and 21px.
+- Passed plates scored `missing` at the hero on content, then again at responsive. Both gates now score a passed plate on placement.
+- One session forced two gates by quoting a brief line ("should feel like an extension of her artwork") as user permission. `forceAllowed` now requires the user's words reported or quoted, a downgrade verb, and the comp noun in one reason.
+- One session spent 25 turns keying plates with `magick` after using the harness image tool; the plates NEXT line now names `generate-image.mjs --plate` as the tool and the harness tool as the fallback.
+
+Next: opus-5 arm on the same packets; a fifth sol pass on 07 alone to see whether the hero clears 72 with the measurement fixes.
