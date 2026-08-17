@@ -4,22 +4,27 @@
  * faces against it, so the face is chosen by metrics instead of by name.
  *
  *   node font-match.mjs --measure <region-id> [--spec .impeccable/build/spec.json]
- *     Fingerprints the comp crop of a text region: cap height (px), average
- *     glyph advance per cap height (width class), stroke weight (ink fraction
- *     per glyph area), and letter density. Prints them and stores them on the
+ *     Fingerprints the comp crop of a text region (lib/font-fingerprint.mjs):
+ *     cap height (px), glyph width per cap height (width class), stroke
+ *     density and stem width (weight class), tracking, plus the size-invariant
+ *     shape vector the ranking uses. Prints the summary and stores it on the
  *     region in the spec (`type` block), so build code can set font-size from
  *     capHeightPx and the hero gate can name a width/weight miss.
  *
- *   node font-match.mjs --rank <region-id> [--candidates "Barlow Condensed:700,Oswald:600"] [--text "The manuals stop."]
- *     Renders the region's text (or --text) in every candidate face (yours
- *     plus a built-in shortlist for the comp's width class) at the
- *     comp's cap height in a headless browser (Google Fonts CSS, or any
- *     locally installed face), measures the same fingerprint, and ranks the
- *     candidates by distance. Prints the ranking with per-face width and
- *     weight deltas and the CSS to use (family, weight, and the font-size
+ *   node font-match.mjs --rank <region-id> [--candidates "Barlow Condensed:700,Oswald:600"] [--text "The manuals stop."] [--category sans,display]
+ *     Candidates come from a fingerprint index of the Google Fonts catalog
+ *     (data/font-index.json, ~3,000 faces at two cap heights; the crop is
+ *     routed to the 14px or 48px index by its cap height): the 25 nearest
+ *     faces by fingerprint distance, plus the names you pass. Each candidate
+ *     is then rendered with the region's text at the comp's cap height in a
+ *     headless browser (Google Fonts CSS), fingerprinted the same way, and
+ *     ranked by the same distance on the rendered text. Prints CATALOG (the
+ *     index's top five), the ranking with per-face width and weight deltas,
+ *     a proof sheet, and the CSS to use (family, weight, and the font-size
  *     that reproduces the comp's cap height). Needs a browser: playwright or
  *     puppeteer resolvable from the project or the impeccable CLI; without
- *     one, prints the comp fingerprint and how to read it.
+ *     one, the CATALOG line is the ranking. Without the index the built-in
+ *     per-width-class shortlist stands in.
  *
  * Why: models pick faces from memory and never measure. Three of the six
  * misses a human called on a first-round build were the same miss: the
@@ -32,7 +37,8 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { decodePng, encodePng } from './lib/png.mjs';
 import { crop } from './lib/raster.mjs';
-import { toGray } from './lib/image-metrics.mjs';
+import { fingerprint, distance } from './lib/font-fingerprint.mjs';
+import { loadFontIndex, candidatesFromIndex, MIN_RANK_CAP_PX } from './lib/font-index.mjs';
 import { loadSpec, SPEC_PATH } from './comp-spec.mjs';
 
 const require = createRequire(import.meta.url);
@@ -45,131 +51,69 @@ function arg(name, fallback = null) {
 }
 
 // ---- fingerprint ----------------------------------------------------------
-
-/** Otsu threshold on a gray image: ink vs ground, whichever is darker is ink. */
-function otsu(gray) {
-  const hist = new Float64Array(256);
-  for (let i = 0; i < gray.data.length; i++) hist[Math.max(0, Math.min(255, Math.round(gray.data[i])))]++;
-  const total = gray.data.length;
-  let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
-  let sumB = 0, wB = 0, best = 0, thr = 128;
-  for (let t = 0; t < 256; t++) {
-    wB += hist[t]; if (!wB) continue;
-    const wF = total - wB; if (!wF) break;
-    sumB += t * hist[t];
-    const mB = sumB / wB, mF = (sum - sumB) / wF;
-    const between = wB * wF * (mB - mF) ** 2;
-    if (between > best) { best = between; thr = t; }
-  }
-  return thr;
-}
+// fingerprint(img) and distance(a, b) live in lib/font-fingerprint.mjs: size-
+// invariant shape features per text line (advance, x-ratio, stem width,
+// contrast, serif, density, ink profiles) and a noise-normalized weighted L1
+// fitted on held-out Google Fonts probes. The class helpers below turn two of
+// those features into the words the MEASURE line prints.
 
 /**
- * Fingerprint the lettering in an RGBA image:
- *  - lines: text lines found by row-projection of ink
- *  - capHeightPx: median line ink height (cap/x-height blend; consistent across comp and render)
- *  - advance: mean glyph width / capHeightPx (width class; condensed < 0.45, normal ~0.55-0.65, wide > 0.7)
- *  - weight: ink pixels / (glyph bbox area) (light ~0.2, regular ~0.3, bold ~0.4+)
- *  - gap: mean inter-glyph gap / capHeightPx (tracking)
- * Returns null when no ink lines are found.
+ * The feature that reads as width: advX (x-height glyph width / R) on a
+ * mixed-case crop, advTall (cap glyph width / R) when the crop is all caps.
+ * Thresholds sit on the catalog index (advX 0.20 quantile 0.58, median 0.64,
+ * 0.80 quantile 0.71) anchored by named faces: League Gothic 0.36, Oswald 0.42,
+ * Anton 0.48, Barlow Condensed 0.54, Roboto Condensed 0.58, Roboto 0.62,
+ * Inter 0.65, Space Grotesk 0.71, Montserrat Bold 0.76, Archivo Black 0.87.
  */
-export function fingerprint(img) {
-  const g = toGray(img);
-  const thr = otsu(g);
-  // ink is the minority side of the threshold
-  let dark = 0; for (let i = 0; i < g.data.length; i++) if (g.data[i] < thr) dark++;
-  const inkIsDark = dark <= g.data.length / 2;
-  const isInk = (v) => (inkIsDark ? v < thr : v >= thr);
-  const W = g.width, H = g.height;
-  const rowInk = new Uint32Array(H);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (isInk(g.data[y * W + x])) rowInk[y]++;
-  // lines: runs of rows with ink above a small floor, then split each run at
-  // interior valleys (descender/ascender bridges keep adjacent lines joined
-  // at a trickle of ink; a valley under 15% of the run's peak is a line break)
-  const floor = Math.max(1, W * 0.004);
-  const runs = [];
-  let y = 0;
-  while (y < H) {
-    if (rowInk[y] > floor) {
-      let y0 = y; while (y < H && (rowInk[y] > floor || (y + 1 < H && rowInk[y + 1] > floor))) y++;
-      if (y - y0 >= 4) runs.push({ y0, y1: y });
-    } else y++;
-  }
-  const lines = [];
-  for (const run of runs) {
-    let peak = 0; for (let yy = run.y0; yy < run.y1; yy++) peak = Math.max(peak, rowInk[yy]);
-    const valley = peak * 0.15;
-    let start = run.y0, inValley = false, valleyStart = 0;
-    for (let yy = run.y0; yy < run.y1; yy++) {
-      const low = rowInk[yy] < valley;
-      if (low && !inValley) { inValley = true; valleyStart = yy; }
-      if (!low && inValley) {
-        inValley = false;
-        // a valley at least 3 rows deep splits; shorter ones are letter gaps
-        if (yy - valleyStart >= 3 && valleyStart - start >= 4) { lines.push({ y0: start, y1: valleyStart }); start = yy; }
-      }
-    }
-    if (run.y1 - start >= 4) lines.push({ y0: start, y1: run.y1 });
-  }
-  if (!lines.length) return null;
-  const glyphs = [];
-  const gapsAll = [];
-  for (const ln of lines) {
-    // column projection inside the line -> glyph runs
-    const colInk = new Uint32Array(W);
-    for (let yy = ln.y0; yy < ln.y1; yy++) for (let x = 0; x < W; x++) if (isInk(g.data[yy * W + x])) colInk[x]++;
-    let x = 0; const runs = [];
-    while (x < W) {
-      if (colInk[x] > 0) { const x0 = x; while (x < W && colInk[x] > 0) x++; runs.push({ x0, x1: x }); } else x++;
-    }
-    // ink height per line: rows in the line whose ink is above 20% of the line's max (drops ascender/descender tails)
-    let maxRow = 0; for (let yy = ln.y0; yy < ln.y1; yy++) maxRow = Math.max(maxRow, rowInk[yy]);
-    let hy0 = ln.y0, hy1 = ln.y1;
-    while (hy0 < ln.y1 && rowInk[hy0] < maxRow * 0.2) hy0++;
-    while (hy1 > hy0 && rowInk[hy1 - 1] < maxRow * 0.2) hy1--;
-    const lineH = Math.max(1, hy1 - hy0);
-    for (let i = 0; i < runs.length; i++) {
-      const r = runs[i];
-      const w = r.x1 - r.x0;
-      if (w < lineH * 0.15) continue; // dots, punctuation, thin rules
-      let ink = 0; for (let yy = hy0; yy < hy1; yy++) for (let xx = r.x0; xx < r.x1; xx++) if (isInk(g.data[yy * W + xx])) ink++;
-      glyphs.push({ w, h: lineH, ink });
-      if (i + 1 < runs.length) { const gap = runs[i + 1].x0 - r.x1; if (gap < lineH * 0.6) gapsAll.push(gap / lineH); }
-    }
-  }
-  if (!glyphs.length) return null;
-  const med = (a) => { const s = [...a].sort((p, q) => p - q); return s[Math.floor(s.length / 2)]; };
-  const capHeightPx = med(glyphs.map((x) => x.h));
-  const advance = med(glyphs.map((x) => x.w / x.h));
-  const weight = med(glyphs.map((x) => x.ink / (x.w * x.h)));
-  const gap = gapsAll.length ? med(gapsAll) : 0;
-  return { lines: lines.length, glyphs: glyphs.length, capHeightPx: +capHeightPx.toFixed(1), advance: +advance.toFixed(3), weight: +weight.toFixed(3), gap: +gap.toFixed(3), inkIsDark };
+export function widthMeasure(fp) {
+  if (!fp) return null;
+  if (fp.advX != null) return { key: 'advX', value: fp.advX };
+  if (fp.advTall != null) return { key: 'advTall', value: fp.advTall };
+  if (fp.advance != null) return { key: 'advance', value: fp.advance };
+  return null;
 }
-
-export function widthClass(advance) {
-  if (advance < 0.42) return 'compressed';
-  if (advance < 0.52) return 'condensed';
-  if (advance < 0.66) return 'normal';
+export function widthClass(fp) {
+  const m = typeof fp === 'number' ? { key: 'advX', value: fp } : widthMeasure(fp);
+  if (!m) return 'normal';
+  // cap widths run ~10% wider than x-height widths against the same R
+  const t = m.key === 'advTall' ? [0.45, 0.61, 0.78] : [0.42, 0.585, 0.72];
+  if (m.value < t[0]) return 'compressed';
+  if (m.value < t[1]) return 'condensed';
+  if (m.value < t[2]) return 'normal';
   return 'wide';
 }
-export function weightClass(weight) {
-  if (weight < 0.22) return 'light';
-  if (weight < 0.3) return 'regular';
-  if (weight < 0.38) return 'medium';
-  if (weight < 0.46) return 'bold';
-  return 'black';
+/**
+ * The feature that reads as weight: densTall (ink / bbox area of cap-height
+ * glyphs); stemW (stem width / R) when no cap glyph was separable. Catalog
+ * anchors for densTall: Lato 300 0.27, Roboto 300 0.32, Playfair 400 0.37,
+ * Inter 400 0.44, Roboto 700 0.59, Work Sans 700 0.64, Bebas Neue 0.68,
+ * Oswald 700 0.72, League Gothic 0.76, Anton 0.79. For stemW: Roboto 300 0.10,
+ * Roboto 400 0.14, Inter 700 0.22, Archivo Black 0.30.
+ */
+export function weightMeasure(fp) {
+  if (!fp) return null;
+  if (fp.densTall != null) return { key: 'densTall', value: fp.densTall };
+  if (fp.densX != null) return { key: 'densX', value: fp.densX };
+  if (fp.stemW != null) return { key: 'stemW', value: fp.stemW };
+  if (fp.weight != null) return { key: 'weight', value: fp.weight };
+  return null;
 }
-
-export function distance(a, b) {
-  // width and weight both decide whether a face reads as the same face;
-  // tracking is a CSS knob (letter-spacing) so it counts least.
-  return Math.abs(a.advance - b.advance) * 2.5 + Math.abs(a.weight - b.weight) * 2.5 + Math.abs(a.gap - b.gap) * 0.5;
+export function weightClass(fp) {
+  const m = typeof fp === 'number' ? { key: 'densTall', value: fp } : weightMeasure(fp);
+  if (!m) return 'regular';
+  const t = m.key === 'stemW' ? [0.105, 0.165, 0.195, 0.24] : [0.34, 0.48, 0.56, 0.66];
+  if (m.value < t[0]) return 'light';
+  if (m.value < t[1]) return 'regular';
+  if (m.value < t[2]) return 'medium';
+  if (m.value < t[3]) return 'bold';
+  return 'black';
 }
 
 /**
  * A starter shortlist per width class, Google Fonts only, chosen to span
- * weight and character inside the class. The model adds its own names on
- * top; the point is that a ranking never runs against one guessed family.
+ * weight and character inside the class. Used only when the catalog index
+ * (data/font-index.json) is missing; with the index, candidates come from
+ * the comp's fingerprint and the model's own names.
  */
 export const SHORTLIST = {
   compressed: ['League Gothic:400', 'Bebas Neue:400', 'Anton:400', 'Six Caps:400', 'Big Shoulders Display:900', 'Antonio:700', 'Saira Extra Condensed:800', 'Oswald:700'],
@@ -178,18 +122,37 @@ export const SHORTLIST = {
   wide: ['Archivo Black:400', 'Syne:800', 'Space Grotesk:700', 'Unbounded:700', 'Bricolage Grotesque:800', 'Sora:800', 'Outfit:800', 'Lexend:800'],
 };
 
-/** Weight-shifted variants of a candidate list toward the comp's weight class. */
-export function withWeightVariants(list, targetWeight) {
+/** Weight-shifted variants of a candidate list, one step lighter and heavier; the ranking decides. */
+export function withWeightVariants(list) {
   const out = [];
   for (const c of list) {
     out.push(c);
     const m = /^(.*?):(\d{3})$/.exec(c);
     if (!m) continue;
     const w = parseInt(m[2], 10);
-    // always offer one step lighter and one heavier; the ranking decides
     for (const d of [-200, 200]) { const nw = w + d; if (nw >= 100 && nw <= 900) out.push(`${m[1]}:${nw}`); }
   }
   return [...new Set(out)];
+}
+
+/**
+ * Candidate faces for a comp fingerprint: the nearest index faces (top n by
+ * fingerprint distance, routed to the 14px or 48px index by the crop's cap
+ * height, optionally filtered by category), the caller's own names first,
+ * and the built-in shortlist only when there is no index. Returns
+ * { candidates: [{ family, weight }], catalog: [index hits], source }.
+ */
+export function selectCandidates(fp, { own = [], index = null, n = 25, category = null } = {}) {
+  const catalog = index ? candidatesFromIndex(fp, index, { n, category }) : [];
+  const list = [...own, ...catalog.map((c) => ({ family: c.family, weight: c.weight }))];
+  let source = 'index';
+  if (!index) {
+    source = 'shortlist';
+    for (const s of withWeightVariants(SHORTLIST[widthClass(fp)] || SHORTLIST.normal)) list.push(parseCandidates(s)[0]);
+  }
+  const seen = new Set();
+  const candidates = list.filter((c) => { const k = `${c.family}:${c.weight}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  return { candidates, catalog, source };
 }
 
 // ---- browser --------------------------------------------------------------
@@ -321,7 +284,19 @@ export async function renderProofSheet(compCrop, top, text, capPx, transform = '
 // ---- CLI ------------------------------------------------------------------
 
 function describe(fp) {
-  return `capHeight ${fp.capHeightPx}px, width ${widthClass(fp.advance)} (advance ${fp.advance}), weight ${weightClass(fp.weight)} (ink ${fp.weight}), tracking ${fp.gap}`;
+  const wm = widthMeasure(fp), wt = weightMeasure(fp);
+  const wmS = wm ? ` (${wm.key} ${wm.value})` : '';
+  const wtS = wt ? ` (${wt.key} ${wt.value})` : '';
+  return `capHeight ${fp.capHeightPx}px, width ${widthClass(fp)}${wmS}, weight ${weightClass(fp)}${wtS}, tracking ${fp.gap}${fp.allCaps ? ', all caps' : ''}`;
+}
+
+/** Fingerprint fields the spec keeps for a region: the class-bearing features plus the shape summary, not the whole vector. */
+function compactFp(fp) {
+  if (!fp) return fp;
+  const keep = ['lines', 'glyphs', 'capHeightPx', 'inkIsDark', 'allCaps', 'advance', 'advTall', 'advX', 'gap', 'xRatio', 'stemW', 'contrast', 'serif', 'densTall', 'densX', 'weight'];
+  const out = {};
+  for (const k of keep) if (fp[k] !== undefined) out[k] = fp[k];
+  return out;
 }
 
 async function main() {
@@ -330,7 +305,7 @@ async function main() {
   const measureId = arg('measure'), rankId = arg('rank');
   const id = measureId || rankId;
   if (!id) {
-    console.error('usage: font-match.mjs --measure <text-region-id> | --rank <text-region-id> --candidates "Family:700,Family2:400,..." [--text "..."] [--transform uppercase]');
+    console.error('usage: font-match.mjs --measure <text-region-id> | --rank <text-region-id> [--candidates "Family:700,Family2:400,..."] [--text "..."] [--transform uppercase] [--category sans,serif,display,handwriting,mono]');
     process.exit(1);
   }
   if (!spec) { console.error(`font-match: no spec at ${specPath}; run comp-spec.mjs first`); process.exit(1); }
@@ -349,21 +324,29 @@ async function main() {
     console.log(`MEASURE ${id}: no separable lettering in the region crop at comp resolution; size this text by its box (${region.px.w}x${region.px.h}px) and inherit face and weight from the nearest measured region.`);
     process.exit(0);
   }
-  region.type = { ...(region.type || {}), comp: fp, widthClass: widthClass(fp.advance), weightClass: weightClass(fp.weight) };
+  region.type = { ...(region.type || {}), comp: compactFp(fp), widthClass: widthClass(fp), weightClass: weightClass(fp) };
   fs.writeFileSync(specPath, JSON.stringify(spec, null, 2));
-  console.log(`MEASURE ${id}: ${describe(fp)} over ${fp.lines} line${fp.lines === 1 ? '' : 's'}, ${fp.glyphs} glyphs. Set this region's font-size so its cap height renders at ${fp.capHeightPx}px; choose a ${widthClass(fp.advance)} ${weightClass(fp.weight)} face.`);
+  console.log(`MEASURE ${id}: ${describe(fp)} over ${fp.lines} line${fp.lines === 1 ? '' : 's'}, ${fp.glyphs} glyphs. Set this region's font-size so its cap height renders at ${fp.capHeightPx}px; choose a ${widthClass(fp)} ${weightClass(fp)} face.`);
   if (!rankId) return;
+  if (fp.capHeightPx < MIN_RANK_CAP_PX) {
+    console.log(`RANK skipped: cap height ${fp.capHeightPx}px is under ${MIN_RANK_CAP_PX}px, too small at comp resolution for a face fingerprint to mean anything. Size this text by its box (${region.px.w}x${region.px.h}px) and inherit face and weight from the nearest measured region.`);
+    return;
+  }
   const own = parseCandidates(arg('candidates'));
-  const wc = widthClass(fp.advance);
-  const short = withWeightVariants(SHORTLIST[wc] || SHORTLIST.normal, fp.weight).map((x) => parseCandidates(x)[0]);
-  const seen = new Set();
-  const candidates = [...own, ...short].filter((c) => { const k = `${c.family}:${c.weight}`; if (seen.has(k)) return false; seen.add(k); return true; });
-  console.log(`CANDIDATES ${candidates.length}: ${own.length} yours + ${candidates.length - own.length} from the ${wc} shortlist`);
+  const index = loadFontIndex();
+  const { candidates, catalog, source } = selectCandidates(fp, { own, index, n: 25, category: arg('category') });
+  if (index) {
+    const top5 = []; for (const h of catalog) { if (!top5.some((t) => t.family === h.family)) top5.push(h); if (top5.length >= 5) break; }
+    console.log(`CATALOG top-5 by fingerprint: ${top5.map((t) => `${t.family}:${t.weight}`).join(', ')} (from ${index.entries.length} indexed faces${catalog[0] ? `, ${catalog[0].size}px index` : ''}${arg('category') ? `, category ${arg('category')}` : ''})`);
+    console.log(`CANDIDATES ${candidates.length}: ${own.length} yours + ${candidates.length - own.length} nearest in the catalog index`);
+  } else {
+    console.log(`CANDIDATES ${candidates.length}: ${own.length} yours + ${candidates.length - own.length} from the ${widthClass(fp)} shortlist (no catalog index at data/font-index.json)`);
+  }
   const text = arg('text') || region.text || 'The manuals stop. The forum keeps going.';
-  const transform = arg('transform', 'none');
+  const transform = arg('transform', fp.allCaps ? 'uppercase' : 'none');
   const results = await renderCandidates(candidates, text, fp.capHeightPx, { transform });
   if (!results) {
-    console.log('RANK unavailable: no browser (playwright or puppeteer) resolvable from this project or the impeccable CLI. Choose by the MEASURE line: match the width class first, then the weight class; render one headline word against the comp before building on it.');
+    console.log(`RANK unavailable: no browser (playwright or puppeteer) resolvable from this project or the impeccable CLI. ${index ? 'Take the CATALOG line as the ranking' : 'Choose by the MEASURE line'}: match the width class first, then the weight class; render one headline word against the comp before building on it.`);
     return;
   }
   // Drop faces that never loaded (a weight the family does not ship falls
@@ -373,13 +356,16 @@ async function main() {
   const rows = results
     .filter((r) => r.fp && r.loaded)
     .map((r) => ({ ...r, d: distance(fp, r.fp) }))
+    .filter((r) => Number.isFinite(r.d))
     .sort((a, b) => a.d - b.d)
-    .filter((r) => { const k = `${r.family}|${r.fp.advance}|${r.fp.weight}|${r.fp.gap}`; if (seenFp.has(k)) return false; seenFp.add(k); return true; });
+    .filter((r) => { const k = `${r.family}|${r.fp.advX}|${r.fp.advTall}|${r.fp.densTall}|${r.fp.stemW}`; if (seenFp.has(k)) return false; seenFp.add(k); return true; });
   const dropped = results.filter((r) => !r.loaded).map((r) => `${r.family}:${r.weight}`);
   if (dropped.length) console.log(`SKIPPED (not available at that weight on Google Fonts): ${dropped.join(', ')}`);
+  const wm = widthMeasure(fp), wt = weightMeasure(fp);
+  const pctDelta = (m, other) => { if (!m || other?.[m.key] == null) return null; return (other[m.key] - m.value) / m.value; };
+  const fmtPct = (v) => (v == null ? 'n/a' : `${v >= 0 ? '+' : ''}${(v * 100).toFixed(0)}%`);
   for (const r of rows) {
-    const dw = r.fp.advance - fp.advance, dwt = r.fp.weight - fp.weight;
-    console.log(`RANK ${r.family}:${r.weight}${r.loaded ? '' : ' (NOT LOADED, fallback measured)'} distance ${r.d.toFixed(3)}  width ${widthClass(r.fp.advance)} (${dw >= 0 ? '+' : ''}${(dw * 100).toFixed(0)}% advance)  weight ${weightClass(r.fp.weight)} (${dwt >= 0 ? '+' : ''}${(dwt * 100).toFixed(0)}% ink)  font-size ${r.fontSizePx}px for cap ${fp.capHeightPx}px`);
+    console.log(`RANK ${r.family}:${r.weight} distance ${r.d.toFixed(3)}  width ${widthClass(r.fp)} (${fmtPct(pctDelta(wm, r.fp))} ${wm?.key || 'advance'})  weight ${weightClass(r.fp)} (${fmtPct(pctDelta(wt, r.fp))} ${wt?.key || 'ink'})  font-size ${r.fontSizePx}px for cap ${fp.capHeightPx}px`);
   }
   // proof sheet: comp crop over the top three renders, so the choice is seen, not only scored
   try {
@@ -395,10 +381,14 @@ async function main() {
   const best = rows[0];
   if (best) {
     const advice = [];
-    if (Math.abs(best.fp.advance - fp.advance) > 0.06) advice.push(best.fp.advance > fp.advance ? 'still too wide: try a more condensed face or a variable font with a wdth axis' : 'still too narrow: try a wider face');
-    if (Math.abs(best.fp.weight - fp.weight) > 0.06) advice.push(best.fp.weight > fp.weight ? `too heavy: drop to weight ${Math.max(100, best.weight - 200)}` : `too light: raise to weight ${Math.min(900, best.weight + 200)}`);
-    console.log(`USE font-family: '${best.family}'; font-weight: ${best.weight}; font-size: ${best.fontSizePx}px;${advice.length ? ' NOTE ' + advice.join('; ') : ''}`);
-    region.type.chosen = { family: best.family, weight: best.weight, fontSizePx: best.fontSizePx, fp: best.fp };
+    const dw = pctDelta(wm, best.fp), dwt = pctDelta(wt, best.fp);
+    if (dw != null && Math.abs(dw) > 0.1) advice.push(dw > 0 ? 'still too wide: try a more condensed face or a variable font with a wdth axis' : 'still too narrow: try a wider face');
+    // a weight step only helps on a family that ships one; a single-cut display face is what it is
+    const bestEntry = index?.entries.find((e) => e.family === best.family);
+    const variable = bestEntry ? bestEntry.variable : true;
+    if (dwt != null && Math.abs(dwt) > 0.15 && variable) advice.push(dwt > 0 ? `too heavy: drop to weight ${Math.max(100, best.weight - 200)}` : `too light: raise to weight ${Math.min(900, best.weight + 200)}`);
+    console.log(`USE font-family: '${best.family}'; font-weight: ${best.weight}; font-size: ${best.fontSizePx}px;${transform !== 'none' ? ` text-transform: ${transform};` : ''}${advice.length ? ' NOTE ' + advice.join('; ') : ''}`);
+    region.type.chosen = { family: best.family, weight: best.weight, fontSizePx: best.fontSizePx, source, fp: compactFp(best.fp) };
     fs.writeFileSync(specPath, JSON.stringify(spec, null, 2));
   }
 }

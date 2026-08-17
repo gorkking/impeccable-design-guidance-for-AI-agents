@@ -30,6 +30,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 
 function arg(name, fallback = null) {
@@ -327,6 +328,22 @@ async function scorePlate(ctx, outFile) {
     if (min != null && s.overall < min) { console.log(`PLATE-REJECTED below --min ${(min * 100).toFixed(0)}%`); process.exit(3); }
   } catch (e) {
     console.log(`PLATE-SCORE unavailable: ${e.message}`);
+  }
+}
+
+// A comp written into .impeccable/mocks/ while a direction is dealt but the
+// build phases never started is a comp round happening outside the state
+// file, and every session cut after it resumes with no state to follow. The
+// roll writes .impeccable/build/pending.json; build-phase.mjs start clears
+// it. Refuse mock output until start has run (or --force-mock).
+{
+  const outArg = arg('out') || (plateCtx && plateCtx.out) || '';
+  const intoMocks = /(^|[\\/])\.impeccable[\\/]mocks[\\/]/.test(outArg) && !/[\\/]decision[\\/]/.test(outArg);
+  const pending = fs.existsSync(path.join('.impeccable', 'build', 'pending.json'));
+  const state = fs.existsSync(path.join('.impeccable', 'build', 'state.json'));
+  if (intoMocks && pending && !state && !process.argv.includes('--force-mock')) {
+    console.error(`generate-image: a direction was chosen (concept-seed rolled) but build-phase.mjs start has not run, so this comp would be generated outside the build's state. Run: node ${path.dirname(fileURLToPath(import.meta.url))}/build-phase.mjs start --direction <seed key> --kind <assigned|pick|challenger|canon> first (it opens the comps phase), then generate. --force-mock overrides.`);
+    process.exit(4);
   }
 }
 
