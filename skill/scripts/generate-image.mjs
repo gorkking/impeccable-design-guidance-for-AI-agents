@@ -207,7 +207,7 @@ const plateId = arg('plate');
 let plateCtx = null;
 if (plateId) {
   const { loadSpec, platePrompt, plateReference, SPEC_PATH } = await import('./comp-spec.mjs');
-  const { decodePng, encodePng } = await import('./lib/png.mjs');
+  const { decodePng, encodePng, loadRaster } = await import('./lib/png.mjs');
   const { crop, resize } = await import('./lib/raster.mjs');
   const specPath = arg('spec', SPEC_PATH);
   const spec = loadSpec(specPath);
@@ -216,7 +216,7 @@ if (plateId) {
   if (!region) { console.error(`generate-image: no region ${plateId} in ${specPath}; ids: ${spec.regions.map((r) => r.id).join(', ')}`); process.exit(1); }
   if (region.medium !== 'raster') { console.error(`generate-image: region ${plateId} is ${region.medium}, not a plate; set its kind to plate|image|texture in the regions file`); process.exit(1); }
   let comp;
-  try { comp = decodePng(fs.readFileSync(spec.comp)); } catch (e) { console.error(`generate-image: cannot read comp ${spec.comp}: ${e.message}`); process.exit(1); }
+  try { comp = loadRaster(spec.comp).image; } catch (e) { console.error(`generate-image: cannot read comp ${spec.comp}: ${e.message}`); process.exit(1); }
   const ref = plateReference(comp, spec, region);
   const refPath = path.join(path.dirname(specPath), 'crops', `${region.id}.png`);
   fs.mkdirSync(path.dirname(refPath), { recursive: true });

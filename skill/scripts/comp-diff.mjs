@@ -40,7 +40,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { decodePng, encodePng } from './lib/png.mjs';
+import { decodePng, encodePng, loadRaster } from './lib/png.mjs';
 import { crop, resize, fit, blit, createImage, fillRect, strokeRect, drawLabel } from './lib/raster.mjs';
 import { structureScore, colorScore, detailScore, diffMap, horizontalBands, bandScore, dominantColors, toGray, blurGray, ssimShifted } from './lib/image-metrics.mjs';
 
@@ -53,7 +53,7 @@ function arg(name, fallback = null) {
 const flag = (name) => process.argv.includes(`--${name}`);
 
 export function readPng(file) {
-  return decodePng(fs.readFileSync(file));
+  return loadRaster(file).image;
 }
 
 /**

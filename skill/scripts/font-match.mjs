@@ -35,7 +35,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { decodePng, encodePng } from './lib/png.mjs';
+import { decodePng, encodePng, loadRaster } from './lib/png.mjs';
 import { crop } from './lib/raster.mjs';
 import { fingerprint, distance } from './lib/font-fingerprint.mjs';
 import { loadFontIndex, candidatesFromIndex, MIN_RANK_CAP_PX } from './lib/font-index.mjs';
@@ -311,7 +311,7 @@ async function main() {
   if (!spec) { console.error(`font-match: no spec at ${specPath}; run comp-spec.mjs first`); process.exit(1); }
   const region = spec.regions.find((r) => r.id === id);
   if (!region) { console.error(`font-match: no region ${id}; ids: ${spec.regions.map((r) => r.id).join(', ')}`); process.exit(1); }
-  const comp = decodePng(fs.readFileSync(spec.comp));
+  const comp = loadRaster(spec.comp).image;
   const c = crop(comp, region.px.x, region.px.y, region.px.w, region.px.h);
   const fp = fingerprint(c);
   if (!fp) {

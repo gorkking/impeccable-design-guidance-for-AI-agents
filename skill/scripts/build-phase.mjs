@@ -66,7 +66,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { decodePng } from './lib/png.mjs';
+import { decodePng, loadRaster } from './lib/png.mjs';
 const require = createRequire(import.meta.url);
 import { crop, createImage, blit } from './lib/raster.mjs';
 import { compare, verdictFor } from './comp-diff.mjs';
@@ -254,7 +254,7 @@ export function gatePlates(state, { specPath = SPEC_PATH } = {}) {
   const rasterRegions = spec.regions.filter((r) => r.medium === 'raster');
   if (!rasterRegions.length) return { ok: true, reasons: [], summary: 'no plates owed', plates: [] };
   let comp = null;
-  try { comp = decodePng(fs.readFileSync(spec.comp)); } catch { /* scored without the comp crop below */ }
+  try { comp = loadRaster(spec.comp).image; } catch { /* scored without the comp crop below */ }
   const reasons = [], plates = [];
   for (const r of rasterRegions) {
     const file = r.plate;
@@ -561,7 +561,7 @@ export function advance(state, { force = false, reason = null, gateOpts = {} } =
   p.status = 'closed'; p.closedAt = now();
   if (phase === 'comps' && gate.approved) {
     state.comp = gate.approved;
-    if (!state.breakpoint) { try { const i = decodePng(fs.readFileSync(gate.approved)); state.breakpoint = `${i.width}x${i.height}`; } catch { /* non-png comp: breakpoint stays unset */ } }
+    if (!state.breakpoint) { try { const i = loadRaster(gate.approved).image; state.breakpoint = `${i.width}x${i.height}`; } catch { /* non-png comp: breakpoint stays unset */ } }
   }
   const next = PHASES[idx + 1];
   state.phase = next;
@@ -627,7 +627,7 @@ async function main() {
       return;
     }
     let breakpoint = arg('breakpoint');
-    if (!breakpoint && comp) { try { const i = decodePng(fs.readFileSync(comp)); breakpoint = `${i.width}x${i.height}`; } catch { /* leave null */ } }
+    if (!breakpoint && comp) { try { const i = loadRaster(comp).image; breakpoint = `${i.width}x${i.height}`; } catch { /* leave null */ } }
     const existing = loadState();
     if (existing && !flag('reset')) {
       console.log(`build-phase: state exists (phase ${existing.phase}); pass --reset to start over`);

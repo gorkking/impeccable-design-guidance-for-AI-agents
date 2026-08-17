@@ -38,7 +38,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { decodePng, encodePng } from './lib/png.mjs';
+import { decodePng, encodePng, loadRaster } from './lib/png.mjs';
 import { crop, resize, fillRect, strokeRect, drawLabel, drawText } from './lib/raster.mjs';
 import { dominantColors, horizontalBands, detailGrid } from './lib/image-metrics.mjs';
 
@@ -273,7 +273,7 @@ async function main() {
     if (!spec) { console.error(`comp-spec: no spec at ${specPath}`); process.exit(1); }
     const region = spec.regions.find((r) => r.id === arg('crop'));
     if (!region) { console.error(`comp-spec: no region ${arg('crop')}; ids: ${spec.regions.map((r) => r.id).join(', ')}`); process.exit(1); }
-    const comp = decodePng(fs.readFileSync(spec.comp));
+    const comp = loadRaster(spec.comp).image;
     let c = region.medium === 'raster' && !flag('raw') ? plateReference(comp, spec, region) : crop(comp, region.px.x, region.px.y, region.px.w, region.px.h);
     const scale = parseFloat(arg('scale', '1'));
     if (scale > 1) c = resize(c, c.width * scale, c.height * scale);
@@ -290,7 +290,7 @@ async function main() {
     process.exit(1);
   }
   let comp;
-  try { comp = decodePng(fs.readFileSync(compPath)); } catch (e) { console.error(`comp-spec: cannot read ${compPath}: ${e.message}`); process.exit(1); }
+  try { comp = loadRaster(compPath).image; } catch (e) { console.error(`comp-spec: cannot read ${compPath}: ${e.message}`); process.exit(1); }
 
   if (flag('grid')) {
     fs.mkdirSync(path.dirname(GRID_PATH), { recursive: true });

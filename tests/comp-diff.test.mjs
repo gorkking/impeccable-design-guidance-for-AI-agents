@@ -1,12 +1,12 @@
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { decodePng, encodePng } from '../skill/scripts/lib/png.mjs';
+import { decodePng, encodePng, loadRaster } from '../skill/scripts/lib/png.mjs';
 import { createImage, fillRect, blit, crop, resize, drawText } from '../skill/scripts/lib/raster.mjs';
 import { compare, verdictFor, alignBuild } from '../skill/scripts/comp-diff.mjs';
 import { dominantColors, structureScore, detailScore } from '../skill/scripts/lib/image-metrics.mjs';
@@ -222,4 +222,21 @@ describe('comp-diff CLI', () => {
     assert.equal(res.status, 1);
     assert.match(res.stderr, /usage/);
   });
+});
+
+it('loadRaster reads a WebP comp through a sibling .png cache instead of rewriting the source', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'raster-'));
+  const src = path.join(dir, 'comp.webp');
+  const png = encodePng((() => { const i = createImage(24, 16); fillRect(i, 0, 0, 24, 16, [200, 40, 40, 255]); return i; })());
+  fs.writeFileSync(path.join(dir, 'seed.png'), png);
+  let ok = true;
+  try { execFileSync('cwebp', ['-lossless', path.join(dir, 'seed.png'), '-o', src], { stdio: 'ignore' }); } catch { ok = false; }
+  if (!ok) return; // no cwebp on this machine: nothing to assert
+  const before = fs.readFileSync(src);
+  const { image, path: decoded } = loadRaster(src);
+  assert.equal(image.width, 24);
+  assert.equal(image.height, 16);
+  assert.equal(decoded, `${src}.png`);
+  assert.ok(fs.readFileSync(src).equals(before), 'source webp bytes untouched');
+  assert.ok(fs.existsSync(`${src}.png`), 'sibling cache written');
 });

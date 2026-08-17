@@ -12,6 +12,8 @@
  * only formats the comp-fidelity tooling has to read.
  */
 import zlib from 'node:zlib';
+import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -247,4 +249,33 @@ export function encodePng({ width, height, data }, { text = null, level = 6 } = 
   parts.push(chunk('IDAT', zlib.deflateSync(raw, { level })));
   parts.push(chunk('IEND', Buffer.alloc(0)));
   return Buffer.concat(parts);
+}
+
+/**
+ * Read any raster the comp pipeline meets (PNG natively; WebP / JPEG / GIF /
+ * AVIF through a converter on PATH) as RGBA. Non-PNG input is converted to a
+ * sibling cache file `<name>.<ext>.png` next to the source, never in place:
+ * a session that overwrites `comp.webp` with PNG bytes leaves a file the
+ * next tool cannot trust and a transcript replay cannot reconstruct.
+ * Returns { image, path } where path is the PNG actually decoded.
+ */
+export function loadRaster(file) {
+  const buf = fs.readFileSync(file);
+  if (isPng(buf)) return { image: decodePng(buf), path: file };
+  const cache = `${file}.png`;
+  if (fs.existsSync(cache)) {
+    try { const b = fs.readFileSync(cache); if (isPng(b)) return { image: decodePng(b), path: cache }; } catch { /* reconvert */ }
+  }
+  const attempts = [
+    ['dwebp', [file, '-o', cache]],
+    ['sips', ['-s', 'format', 'png', file, '--out', cache]],
+    ['magick', [file, cache]],
+    ['convert', [file, cache]],
+  ];
+  let lastErr = null;
+  for (const [cmd, args] of attempts) {
+    try { execFileSync(cmd, args, { stdio: 'ignore' }); const b = fs.readFileSync(cache); if (isPng(b)) return { image: decodePng(b), path: cache }; }
+    catch (e) { lastErr = e; }
+  }
+  throw new Error(`png: ${file} is not a PNG and no converter (dwebp, sips, magick, convert) could produce ${cache}${lastErr ? `: ${lastErr.message}` : ''}`);
 }
