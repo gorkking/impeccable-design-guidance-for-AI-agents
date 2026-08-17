@@ -39,12 +39,20 @@ export function textRegionCheck(region, compCrop, buildCrop, { capTol = 0.22, mi
   // may carry an older fingerprint's reading, and this check has to agree
   // with itself on both sides.
   const comp = fingerprint(compCrop);
-  if (!comp || !comp.capHeightPx || comp.capHeightPx < minCap || comp.glyphs < 6) return { findings, metrics: null };
+  // colour reads on any text region, measured or not: a spine set vertical
+  // (unmeasurable) came back white on red where the comp had black on red
+  // in five builds
+  const colourOnly = () => {
+    const ca = inkColor(compCrop), cb = inkColor(buildCrop);
+    if (ca && cb && ca.ink && cb.ink && deltaE(ca.ink.lab, cb.ink.lab) > 22) findings.push(`text ${region.id}: ink is ${cb.ink.hex} in the build, ${ca.ink.hex} in the comp; use the comp's colour`);
+    return { findings, metrics: null };
+  };
+  if (!comp || !comp.capHeightPx || comp.capHeightPx < minCap || comp.glyphs < 6) return colourOnly();
   // rotated type (a spine set vertical) reads as many short 'lines' of one
   // or two glyphs; the fingerprint has nothing to say about it
-  if (comp.lines >= 5 && comp.glyphs / comp.lines < 3) return { findings, metrics: null };
+  if (comp.lines >= 5 && comp.glyphs / comp.lines < 3) return colourOnly();
   // a cap taller than half the box is a drawing read as a glyph, not type
-  if (comp.capHeightPx > compCrop.height * 0.6) return { findings, metrics: null };
+  if (comp.capHeightPx > compCrop.height * 0.6) return colourOnly();
   const bfp = fingerprint(buildCrop);
   const metrics = { comp: { cap: comp.capHeightPx, lines: comp.lines, glyphs: comp.glyphs }, build: bfp ? { cap: bfp.capHeightPx, lines: bfp.lines, glyphs: bfp.glyphs } : null };
   if (!bfp || bfp.glyphs < 4) {
@@ -57,6 +65,14 @@ export function textRegionCheck(region, compCrop, buildCrop, { capTol = 0.22, mi
   }
   if (comp.lines >= 2 && bfp.lines !== comp.lines && Math.abs(bfp.lines - comp.lines) >= 1) {
     findings.push(`text ${region.id}: ${bfp.lines} line${bfp.lines === 1 ? '' : 's'} in the build, ${comp.lines} in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape`);
+  } else if (comp.lines >= 3 && bfp.lines === comp.lines && Math.abs(capDelta) <= capTol) {
+    // same lines at the same size: the leading is the remaining shape
+    const ba0 = inkBox(compCrop), bb0 = inkBox(buildCrop);
+    if (ba0 && bb0) {
+      const pa = ba0.h / comp.lines, pb = bb0.h / bfp.lines;
+      const dp = (pb - pa) / pa;
+      if (Math.abs(dp) > 0.2) findings.push(`text ${region.id}: line pitch ${Math.round(pb)}px in the build, ${Math.round(pa)}px in the comp (${dp > 0 ? '+' : ''}${Math.round(dp * 100)}%); set line-height so ${comp.lines} lines stand ${Math.round(ba0.h)}px tall`);
+    }
   }
   // weight: compare ink density of tall glyphs when both sides have it and
   // the sizes agree (density at a different cap is a different reading)

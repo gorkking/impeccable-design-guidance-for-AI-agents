@@ -279,6 +279,11 @@ export function compare({ comp, build, spec = null, align = 'top', label = '', k
   // contradicted while the whole-image search forgives it. Find the best
   // global translation once and shift the aligned build by it before
   // cropping regions; the whole score above stays as measured.
+  // The side-by-side and heatmap show the build as captured; only the
+  // region crops read the shifted copy. (The shifted copy used to be what the
+  // side-by-side drew, and its padding read as a white "letterbox" on the
+  // build in every human review.)
+  const asCaptured = aligned;
   const shift = bestShift(comp, aligned);
   if (shift.dx || shift.dy) {
     const shifted = createImage(aligned.width, aligned.height, [255, 255, 255, 255]);
@@ -291,7 +296,7 @@ export function compare({ comp, build, spec = null, align = 'top', label = '', k
     return { ...r, score: strip(s), verdict: verdictFor(s, r.kind), inkBox: { comp: inkBox(a), build: inkBox(b) }, _a: a, _b: b };
   });
   const compPalette = dominantColors(comp), buildPalette = dominantColors(aligned);
-  return { label, align, whole: strip(whole), regions, aligned, compPalette, buildPalette, _whole: whole };
+  return { label, align, whole: strip(whole), regions, aligned: asCaptured, alignedShifted: aligned, shift, compPalette, buildPalette, _whole: whole };
 }
 
 function strip(s) {
