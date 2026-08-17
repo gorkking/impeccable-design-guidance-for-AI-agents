@@ -466,8 +466,17 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   const contradicted = report.regions.filter((r) => r.verdict === 'contradicted');
   // A contradicted plate, image, or text region is the wrong page whatever
   // the mean says; chrome and controls get the one-third allowance.
-  const directionContradicted = contradicted.filter((r) => r.kind === 'plate' || r.kind === 'image' || r.kind === 'text');
-  for (const r of directionContradicted) reasons.push(`region ${r.id} (${r.kind}) is contradicted (structure ${(r.score.structure * 100).toFixed(0)}%, detail added ${(r.score.detailAdded * 100).toFixed(0)}%): ${r.kind === 'text' ? 'the composition of this text region differs from the comp; re-derive it from the spec box' : 'the plate here does not read as the comp region; regenerate it with the crop as reference (generate-image.mjs --plate ' + r.id + ') and place it at its box'}`);
+  // Controls are held like text: their chrome (border, fill, chevron, arrow,
+  // the dropdown's shape) is the comp's, and a control that reads as a
+  // different control is a contradiction of its own. Only icon glyphs carry
+  // the closest-obtainable concession, and those live inside the region.
+  const directionContradicted = contradicted.filter((r) => r.kind === 'plate' || r.kind === 'image' || r.kind === 'text' || r.kind === 'control');
+  for (const r of directionContradicted) reasons.push(`region ${r.id} (${r.kind}) is contradicted (structure ${(r.score.structure * 100).toFixed(0)}%, detail added ${(r.score.detailAdded * 100).toFixed(0)}%): ${r.kind === 'text' ? 'the composition of this text region differs from the comp; re-derive it from the spec box' : r.kind === 'control' ? 'this control does not read as the comp\'s: rebuild its chrome from the crop (border, fill, radius, chevron or arrow, label size) rather than from a component default' : 'the plate here does not read as the comp region; regenerate it with the crop as reference (generate-image.mjs --plate ' + r.id + ') and place it at its box'}`);
+  // a control that drifts far is a different control too: name it
+  for (const r of report.regions) {
+    if (r.kind !== 'control' || r.verdict !== 'drift' || r.score.overall >= 0.65) continue;
+    reasons.push(`control ${r.id} drifts to ${(r.score.overall * 100).toFixed(0)}% (structure ${(r.score.structure * 100).toFixed(0)}%, color ${(r.score.color * 100).toFixed(0)}%): its chrome differs from the comp's; open ${path.join(outDir, 'regions', `${r.id}.png`)} and match the border, fill, radius, chevron or arrow, and label size`);
+  }
   // Controls: report the ink box in comp vs build so a button in a 63px row
   // built into a 41px row is named as numbers, not as a drift score.
   for (const r of report.regions) {
