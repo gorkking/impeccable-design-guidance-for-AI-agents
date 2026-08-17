@@ -62,8 +62,11 @@ const mean = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : null);
 /** Binarize; returns { W, H, ink: Uint8Array, inkIsDark }. */
 function binarize(img) {
   const g = toGray(img);
-  const thr = otsu(g);
+  let thr = otsu(g);
   let dark = 0; for (let i = 0; i < g.data.length; i++) if (g.data[i] < thr) dark++;
+  // a two-level raster (no antialiasing) puts the Otsu threshold on the dark
+  // level itself; step it up so that level counts as ink
+  if (!dark) { thr += 1; for (let i = 0; i < g.data.length; i++) if (g.data[i] < thr) dark++; }
   const inkIsDark = dark <= g.data.length / 2;
   const ink = new Uint8Array(g.data.length);
   let sI = 0, nI = 0, sG = 0, nG = 0;
@@ -319,15 +322,17 @@ function measure(bin, lines) {
 }
 
 /**
- * fingerprint(img) -> features or null. Upsamples 2x (bilinear) when the
+ * fingerprint(img) -> features, or null when no lettering is found. Upsamples (bilinear) when the
  * cap height is under 24px so runs and edges are measured on finer pixels.
  */
-export function fingerprint(img, { minCap = 24 } = {}) {
+export function fingerprint(img, { minCap = 24, minGlyphs = 3 } = {}) {
   let bin = binarize(img);
   let { lines } = findLines(bin);
   if (!lines.length) return null;
   let f = measure(bin, lines);
-  if (!f) return null;
+  // fewer than minGlyphs separable glyphs is not lettering (a rule, a solid
+  // bar, one letterform): callers read null as "no separable lettering"
+  if (!f || f.glyphs < minGlyphs) return null;
   let scale = 1;
   if (f.capHeightPx < minCap && f.capHeightPx >= 4) {
     scale = Math.min(4, Math.ceil(minCap / f.capHeightPx));
@@ -338,7 +343,7 @@ export function fingerprint(img, { minCap = 24 } = {}) {
     if (f2) f = f2;
     else scale = 1;
   }
-  const r = { lines: lines.length, glyphs: f.glyphs, capHeightPx: +(f.capHeightPx / scale).toFixed(1), inkIsDark: bin.inkIsDark, upsampled: scale > 1, allCaps: f.allCaps, weight: f.densTall ?? f.densX };
+  const r = { lines: lines.length, glyphs: f.glyphs, capHeightPx: +(f.capHeightPx / scale).toFixed(1), inkIsDark: bin.inkIsDark, upsampled: scale > 1, allCaps: f.allCaps, weight: f.densTall == null && f.densX == null ? null : +(f.densTall ?? f.densX).toFixed(4) };
   for (const k of FEATURES) r[k] = f[k] == null ? null : +f[k].toFixed(4);
   return r;
 }

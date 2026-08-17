@@ -50,6 +50,14 @@ One raster region end to end: crop the comp region, send the crop as the edits-e
 
 The asset producer agent's job shrinks to: produce the spec's plates, one line per plate, `blockers`, `assumptions`. No inventory of its own (the spec is the inventory), no strategy taxonomy.
 
+### 4b. Type: `font-match.mjs` and the catalog fingerprint index
+
+Faces used to be chosen by name, and the first-round misses said so: headline wider and lighter than the comp, footer heavier. `font-match.mjs --measure <region>` fingerprints the comp crop with `lib/font-fingerprint.mjs`: per-line, size-invariant shape features (glyph width and x-height against the reference height, stem width, stroke contrast, serif ratio, ink density, vertical ink profile, run-length quantiles), all normalized so the same face gives the same numbers at any point size and on different text. The MEASURE line prints cap height, width class, weight class, and tracking, and the spec keeps the summary on the region.
+
+`--rank <region>` no longer starts from a hand-written shortlist. `skill/scripts/data/font-index.json` holds the same fingerprint for ~3,100 Google Fonts faces (every latin family at 300 / 400 / 700 where shipped) rendered at two cap heights, 48px and 14px, because the features hold within a factor of two in size but not across that span; a crop under 22px cap queries the 14px index. The 25 nearest faces by a noise-normalized weighted distance (fitted on 299 held-out probes with different text; 42% top-1 and 72% top-5 family recall at ~30px cap, 52 / 71 at 14px) become the candidates, together with whatever names the model passes in. Those are then rendered with the region's own text at the comp's cap height, fingerprinted again, and ranked by the same distance, so the CATALOG line is the index's guess and the RANK lines are measured on the actual words. Below 10px cap the script says to size by the box and stops. The index is ~700 KB, packed base-36, rebuilt at release time by `scripts/build-font-index.mjs` (network + Playwright); the per-width-class shortlist stays only as the fallback when the index file is missing.
+
+On the moto comp: headline (72px cap, condensed heavy mixed case) ranks League Gothic first with Karantina and Medula One behind it, where the old width/weight formula gave Anton SC and BBH Bogle; for the subhead the index puts Akshar 300 and Reddit Sans Condensed 300 on top, credible condensed light faces where before the class was wrong altogether.
+
 ### 5. Two detector rules
 
 - `organic-clip-path`: `clip-path: polygon()` with 10+ off-grid vertices, or `clip-path: path()` with 3+ curve segments. Geometric clips (cut corners, diagonals, hexagons, arrows) pass; `circle()`/`inset()` pass.
