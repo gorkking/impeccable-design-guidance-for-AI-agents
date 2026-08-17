@@ -503,7 +503,13 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   let readings = null;
   try { readings = heroReadings(state, specForRefs, buildPath); } catch (e) { reasons.push(`hero readings errored (${e.message}); the region scores above stand`); }
   if (readings) {
-    for (const f of readings.text) reasons.push(f);
+    // the numbers are the edit list: keep it short enough to act on in one
+    // pass (the worst first: size, then lines, then colour and place)
+    const order = (f) => (/cap height/.test(f) ? 0 : /lines? in the build/.test(f) ? 1 : /heavier|lighter/.test(f) ? 2 : /ink is/.test(f) ? 3 : 4);
+    const text = [...readings.text].sort((a, b) => order(a) - order(b));
+    const kept = text.slice(0, 8);
+    if (kept.length) reasons.push(`READINGS, each one CSS edit (${text.length > kept.length ? `${kept.length} of ${text.length}, the rest after these` : `${kept.length}`}):`);
+    for (const f of kept) reasons.push(f);
     for (const f of readings.chrome) reasons.push(f);
     if (readings.invented && readings.invented.fraction >= INVENTED_MIN) {
       const cells = readings.invented.cells.map((c) => c.label);
@@ -654,7 +660,7 @@ export function advance(state, { force = false, reason = null, gateOpts = {} } =
   if (phase === 'plates' && Array.isArray(gate.plates)) state.plates = Object.fromEntries(gate.plates.map((pl) => [pl.id, { status: pl.status, score: pl.score, size: pl.size }]));
   if (!gate.ok && force && !forceAllowed(reason)) {
     p.status = 'open';
-    return { ok: false, phase, reasons: [...gate.reasons, `--force refused: "${reason || ''}" does not quote the user downgrading the comp. A single-file deliverable, a missing tool, or difficulty is not a reason; embed the plate as a data URI, produce it with the harness image tool, or ask the user.`], gate };
+    return { ok: false, phase, reasons: [...gate.reasons, `--force refused: "${reason || ''}" does not quote the user downgrading the comp. A single-file deliverable, a missing tool, or difficulty is not a reason, and a refused force is not the end of the phase: the readings above are the edits, each one a CSS value; make them, recapture, advance. Ask the user only when a reading contradicts something they said about this comp.`], gate };
   }
   if (phase === 'hero' && (gate.score != null)) {
     const stuck = heroLoopVerdict(state, gate, gateOpts.artifact || state.artifact || 'index.html');
