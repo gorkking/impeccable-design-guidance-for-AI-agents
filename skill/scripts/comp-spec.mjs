@@ -125,6 +125,76 @@ export function artworkTouchesEdges(img, { contact = EDGE_CONTACT_MIN, band = 2,
   return sides;
 }
 
+/**
+ * Shrink a normalized box to the ink inside it (pixels far from the page
+ * ground), padded by `pad` px, never grown. Returns null when the crop has no
+ * ink or the ink fills the box already.
+ */
+export function snapBoxToInk(comp, box, ground, { pad = 6, minShrink = 0.06 } = {}) {
+  const px = { x: Math.round(box.x * comp.width), y: Math.round(box.y * comp.height), w: Math.round(box.w * comp.width), h: Math.round(box.h * comp.height) };
+  if (px.w < 8 || px.h < 8) return null;
+  const c = crop(comp, px.x, px.y, px.w, px.h);
+  const W = c.width, H = c.height;
+  let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = (y * W + x) * 4;
+    const g = 0.299 * c.data[i] + 0.587 * c.data[i + 1] + 0.114 * c.data[i + 2];
+    if (Math.abs(g - ground) > 60) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  if (x1 < 0) return null;
+  // The bounding box of all ink cannot shed a neighbour that shares the
+  // span (a spine at the left edge, the next column's text at the right).
+  // Take the largest connected ink mass instead: cells of `cell` px are
+  // inked when 4% of their pixels are; 8-connected components; the one
+  // with the most inked cells is the element the region names.
+  const cell = Math.max(6, Math.round(Math.min(W, H) / 40));
+  const cw = Math.ceil(W / cell), ch = Math.ceil(H / cell);
+  const on = new Uint8Array(cw * ch), cnt = new Uint16Array(cw * ch);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = (y * W + x) * 4;
+    const g = 0.299 * c.data[i] + 0.587 * c.data[i + 1] + 0.114 * c.data[i + 2];
+    if (Math.abs(g - ground) > 60) cnt[Math.floor(y / cell) * cw + Math.floor(x / cell)]++;
+  }
+  for (let i = 0; i < on.length; i++) on[i] = cnt[i] >= cell * cell * 0.04 ? 1 : 0;
+  // dilate by one cell so the letters of a word and the lines of a block
+  // join into one mass; a neighbouring column a few cells away stays apart
+  const grown = new Uint8Array(on.length);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+    if (!on[y * cw + x]) continue;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const nx = x + dx, ny = y + dy; if (nx >= 0 && ny >= 0 && nx < cw && ny < ch) grown[ny * cw + nx] = 1; }
+  }
+  const mask = grown;
+  const label = new Int32Array(cw * ch).fill(-1);
+  let best = null;
+  for (let s0 = 0; s0 < on.length; s0++) {
+    if (!mask[s0] || label[s0] >= 0) continue;
+    const stack = [s0]; label[s0] = s0; let n = 0, bx0 = cw, by0 = ch, bx1 = -1, by1 = -1;
+    while (stack.length) {
+      const k = stack.pop();
+      const kx = k % cw, ky = (k / cw) | 0;
+      if (on[k]) { n += cnt[k]; if (kx < bx0) bx0 = kx; if (kx > bx1) bx1 = kx; if (ky < by0) by0 = ky; if (ky > by1) by1 = ky; }
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = kx + dx, ny = ky + dy; if (nx < 0 || ny < 0 || nx >= cw || ny >= ch) continue;
+        const nk = ny * cw + nx; if (mask[nk] && label[nk] < 0) { label[nk] = s0; stack.push(nk); }
+      }
+    }
+    // a mass touching the span's left or right edge continues past it (the
+    // spine, the next column); the element the region names sits inside.
+    // Prefer an inside mass unless the edge mass is far heavier.
+    const touchesSide = bx0 === 0 || bx1 === cw - 1;
+    const cand = { n, bx0, by0, bx1, by1, touchesSide };
+    if (!best) best = cand;
+    else if (best.touchesSide && !cand.touchesSide && cand.n * 3 >= best.n) best = cand;
+    else if (!best.touchesSide && cand.touchesSide && cand.n < best.n * 3) { /* keep inside */ }
+    else if (cand.n > best.n) best = cand;
+  }
+  if (best) { x0 = best.bx0 * cell; y0 = best.by0 * cell; x1 = Math.min(W - 1, (best.bx1 + 1) * cell - 1); y1 = Math.min(H - 1, (best.by1 + 1) * cell - 1); }
+  const nx0 = Math.max(0, x0 - pad), ny0 = Math.max(0, y0 - pad), nx1 = Math.min(W, x1 + 1 + pad), ny1 = Math.min(H, y1 + 1 + pad);
+  const shrink = 1 - ((nx1 - nx0) * (ny1 - ny0)) / (W * H);
+  if (shrink < minShrink) return null;
+  return { x: (px.x + nx0) / comp.width, y: (px.y + ny0) / comp.height, w: (nx1 - nx0) / comp.width, h: (ny1 - ny0) / comp.height };
+}
+
 function medianGray(img) {
   const sample = [];
   const step = Math.max(1, Math.floor((img.width * img.height) / 6000));
@@ -161,7 +231,7 @@ export function uncoveredInkCells(comp, regions) {
     const e = grid.cells[r * 10 + c];
     if (e < threshold) continue;
     const cx = (c + 0.5) / 10, cy = (r + 0.5) / 10;
-    const covered = regions.some((reg) => reg.kind !== 'texture' && reg.kind !== 'band' && cx >= reg.box.x && cx <= reg.box.x + reg.box.w && cy >= reg.box.y && cy <= reg.box.y + reg.box.h);
+    const covered = regions.some((reg) => { const b = reg.coverBox || reg.box; return reg.kind !== 'texture' && reg.kind !== 'band' && cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h; });
     if (!covered) cells.push(`${COLS[c]}${r}`);
   }
   return cells;
@@ -192,7 +262,20 @@ export function measureRegions(comp, regionsInput, compPath) {
     if (raw.note && !RASTER_KINDS.has(kind) && kind !== 'band' && PAINTED_NOTE.test(raw.note) && !raw.codeDrawn) {
       throw new Error(`region ${raw.id} is kind "${kind}" but its note describes painted material ("${raw.note}"). Anything drawn, photographed, or textured ships as a raster plate: set kind to plate (illustration, diagram, figure), image (photograph), or texture (ground). If the note is wrong and code really draws it (a table, a rule, a chrome bar), reword the note or set "codeDrawn": true on the region.`);
     }
-    const box = raw.box && typeof raw.box.x === 'number' ? raw.box : gridToBox(raw.grid);
+    let box = raw.box && typeof raw.box.x === 'number' ? raw.box : gridToBox(raw.grid);
+    // A grid span over-covers: a headline named B1:E4 carries the deck below
+    // it and a slice of the next column, and every measurement downstream
+    // (cap height, line count, structure) inherits that slop; a session
+    // wrote a note saying its hero sat at 67 because the boxes straddled
+    // elements, and it was right. Text and control regions snap to the ink
+    // inside their span (page ground as the reference, a small pad); plates,
+    // textures, chrome, and any region given an explicit box are left as
+    // drawn. The grid stays on the record.
+    let coverBox = null;
+    if (!raw.box && raw.grid && (kind === 'text' || kind === 'control') && raw.snap !== false) {
+      const snapped = snapBoxToInk(comp, box, pageGround);
+      if (snapped) { coverBox = box; box = snapped; }
+    }
     // A code region is one element the page draws: a headline, a table, a
     // button, a bar. A "chrome" region covering a third of the comp is a
     // column, and a column scored as one region hides everything inside it
@@ -220,6 +303,8 @@ export function measureRegions(comp, regionsInput, compPath) {
       id: raw.id,
       kind,
       note: raw.note || null,
+      grid: raw.grid || null,
+      coverBox: coverBox ? { x: r4(coverBox.x), y: r4(coverBox.y), w: r4(coverBox.w), h: r4(coverBox.h) } : undefined,
       box: { x: r4(box.x), y: r4(box.y), w: r4(box.w), h: r4(box.h) },
       px,
       aspect: r4(px.w / px.h),

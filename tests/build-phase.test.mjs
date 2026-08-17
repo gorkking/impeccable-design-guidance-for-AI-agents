@@ -74,6 +74,23 @@ describe('comp-spec', () => {
     assert.equal(plate.regions[0].medium, 'raster');
   });
 
+  it('snaps a text region to the largest ink mass in its grid span, keeping the span for coverage', () => {
+    // headline block at left, a thin dark spine on the span's left edge, a
+    // column of small text at its right: the span B1:E4 covers all three
+    const comp = createImage(1000, 1000, [235, 232, 220, 255]);
+    fillRect(comp, 100, 0, 12, 1000, [160, 40, 30, 255]);
+    drawText(comp, 'KEEP OLD', 160, 130, [20, 20, 20, 255], 8);
+    drawText(comp, 'IRON', 160, 220, [20, 20, 20, 255], 8);
+    for (let i = 0; i < 6; i++) drawText(comp, 'small column text', 430, 120 + i * 30, [20, 20, 20, 255], 2);
+    const spec = measureRegions(comp, { allowUncovered: true, regions: [{ id: 'headline', kind: 'text', grid: 'B1:E4', note: 'two-line block headline' }] }, 'c.png');
+    const r = spec.regions[0];
+    assert.equal(r.grid, 'B1:E4');
+    assert.ok(r.coverBox && r.coverBox.w === 0.4, 'the span stays on the record');
+    assert.ok(r.box.w < 0.3 && r.box.x >= 0.14 && r.box.x + r.box.w <= 0.42, `snapped to the headline: ${JSON.stringify(r.box)}`);
+    const plain = measureRegions(comp, { allowUncovered: true, regions: [{ id: 'headline', kind: 'text', grid: 'B1:E4', note: 'two-line block headline', snap: false }] }, 'c.png');
+    assert.equal(plain.regions[0].box.w, 0.4);
+  });
+
   it('warns when a plate box cuts through its own artwork', () => {
     // a black arch on paper, drawn wider than the region that names it
     const comp = createImage(1000, 1000, [235, 232, 220, 255]);
