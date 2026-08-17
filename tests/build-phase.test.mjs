@@ -74,6 +74,15 @@ describe('comp-spec', () => {
     assert.equal(plate.regions[0].medium, 'raster');
   });
 
+  it('refuses a code region that covers a column of the comp, unless container', () => {
+    const comp = makeComp();
+    assert.throws(() => measureRegions(comp, { allowUncovered: true, regions: [{ id: 'parts-column', kind: 'chrome', grid: 'G0:J9' }] }, 'c.png'), /covers 40% of the comp/);
+    const ok = measureRegions(comp, { allowUncovered: true, regions: [{ id: 'parts-column', kind: 'chrome', grid: 'G0:J9', container: true }] }, 'c.png');
+    assert.equal(ok.regions[0].kind, 'chrome');
+    const plate = measureRegions(comp, { allowUncovered: true, regions: [{ id: 'art', kind: 'plate', grid: 'G0:J9' }] }, 'c.png');
+    assert.equal(plate.regions[0].medium, 'raster');
+  });
+
   it('refuses a regions file that leaves comp ink unnamed, unless allowUncovered', () => {
     const comp = makeComp();
     // only the masthead named: the headline, plate, and list are ink no region covers
@@ -149,7 +158,7 @@ describe('build-phase state machine (CLI)', () => {
       { id: 'masthead', kind: 'chrome', grid: 'A0:J0' },
       { id: 'headline', kind: 'text', grid: 'A1:D2' },
       { id: 'art', kind: 'plate', grid: 'F1:J4', note: 'noise plate' },
-      { id: 'list', kind: 'control', grid: 'A5:J9' },
+      { id: 'list', kind: 'control', grid: 'A5:J9', container: true },
     ] }));
   });
   after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
@@ -305,7 +314,7 @@ describe('build-phase state machine (CLI)', () => {
     fs.writeFileSync(path.join(d3, 'regions.json'), JSON.stringify({ allowUncovered: true, regions: [
       { id: 'masthead', kind: 'chrome', grid: 'A0:J0' },
       { id: 'art', kind: 'plate', grid: 'F1:J4' },
-      { id: 'list', kind: 'control', grid: 'A5:J9' },
+      { id: 'list', kind: 'control', grid: 'A5:J9', container: true },
     ] }));
     run(PHASE_SCRIPT, ['start', '--comp', 'comp.png', '--artifact', 'index.html'], d3);
     run(SPEC_SCRIPT, ['--comp', 'comp.png', '--regions', 'regions.json'], d3);

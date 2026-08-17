@@ -90,6 +90,9 @@ function paletteOf(img) {
 /** Words in a region note that name painted material rather than code-drawn UI. */
 export const PAINTED_NOTE = /\b(diagram|drawing|drawn|illustrat\w*|figure|schematic|exploded|photo\w*|picture|painting|painted|render\w*|artwork|engraving|etching|linework|line art|texture\w*|grain|paper|fabric|halftone|watercolou?r|sketch\w*|blueprint|technical geometry|carburetor geometry|product shot|hero image|3d)\b/i;
 
+/** A text/control/chrome region larger than this fraction of the comp is a column, not an element. */
+export const MAX_CODE_REGION_AREA = 0.25;
+
 function energyOf(img) {
   const g = detailGrid(img, 4, 4, 256);
   let s = 0; for (const v of g.cells) s += v;
@@ -141,6 +144,16 @@ export function measureRegions(comp, regionsInput, compPath) {
       throw new Error(`region ${raw.id} is kind "${kind}" but its note describes painted material ("${raw.note}"). Anything drawn, photographed, or textured ships as a raster plate: set kind to plate (illustration, diagram, figure), image (photograph), or texture (ground). If the note is wrong and code really draws it (a table, a rule, a chrome bar), reword the note or set "codeDrawn": true on the region.`);
     }
     const box = raw.box && typeof raw.box.x === 'number' ? raw.box : gridToBox(raw.grid);
+    // A code region is one element the page draws: a headline, a table, a
+    // button, a bar. A "chrome" region covering a third of the comp is a
+    // column, and a column scored as one region hides everything inside it
+    // (a session named seven regions for a page with three plates, a table,
+    // a note, callouts and a spine, and the hero gate could name nothing).
+    // Raster regions may be as large as the material; a texture is a sample.
+    const area = box.w * box.h;
+    if (!RASTER_KINDS.has(kind) && kind !== 'band' && area > MAX_CODE_REGION_AREA && !raw.container) {
+      throw new Error(`region ${raw.id} (${kind}) covers ${Math.round(area * 100)}% of the comp; a code region is one element (a headline, a table, a control, a rule, a bar), and one this large is a column holding several. Name each element inside it as its own region (every illustration or photo as a plate), or set "container": true on the region if it truly is one undivided element.`);
+    }
     const px = { x: Math.round(box.x * comp.width), y: Math.round(box.y * comp.height), w: Math.round(box.w * comp.width), h: Math.round(box.h * comp.height) };
     const c = crop(comp, px.x, px.y, px.w, px.h);
     const energy = energyOf(c);
