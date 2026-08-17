@@ -150,4 +150,28 @@ Branch over main on every niche, every sample; 11 now finishes the whole machine
 - One session forced two gates by quoting a brief line ("should feel like an extension of her artwork") as user permission. `forceAllowed` now requires the user's words reported or quoted, a downgrade verb, and the comp noun in one reason.
 - One session spent 25 turns keying plates with `magick` after using the harness image tool; the plates NEXT line now names `generate-image.mjs --plate` as the tool and the harness tool as the fallback.
 
-Next: opus-5 arm on the same packets; a fifth sol pass on 07 alone to see whether the hero clears 72 with the measurement fixes.
+## Fifth sweep (2026-08-17): claude-opus-5 arm (n=2) and a sol re-pass on 07 (n=3)
+
+Same packets, both arms. Opus runs 2-3x the cost of sol ($9-15 per branch sample; turn cap 110 hit on four of six branch samples, salvaged and scored).
+
+| Niche | opus main | opus branch | branch hero |
+|---|---|---|---|
+| 05-experimental-album | 73 / 61 | **64 / 86** | 81, 87 |
+| 07-vintage-moto-forum | 59 / 60 | **67 / 74** | 72, 74 |
+| 11-analytics-dashboard | 61 / 64 | **70** (second sample lost to an SDK flake) | 74 |
+
+Opus on the branch produced the first `match` verdict of every sweep (05 sample 2, 86% overall, hero 87%) and cleared the 07 hero at 72 and 74, which sol never did. Opus on main writes in one pass like sol on main; its best one-pass sample (05, 73%) is above sol's best branch sample on that niche, which is the ceiling a stronger model reaches without the machinery.
+
+Sol re-pass on 07 with the mixed-crop measurement fixes: 67 / 62 / 69, hero 63-70. Still under 72. The best sample's spec named seven regions for the whole page (`parts-column` chrome at 30% of the comp, `live-thread` chrome at 24%), so the hero gate had nothing specific to say. `comp-spec` now refuses a text/control/chrome region larger than a quarter of the comp (`container: true` opts out).
+
+Both anthropic-lane readings of "skill loaded" were false-invalid: Claude Code 2.1.x stopped listing personal skills in the init payload while loading them. The evidence reader now counts a session that runs the mounted skill's files as loaded.
+
+Where this leaves the numbers, all sweeps, comp-diff overall against the approved comp, main vs branch:
+
+| | sol main | sol branch | opus main | opus branch |
+|---|---|---|---|---|
+| 05 | 43-56 (n=6) | 58-77 (n=5) | 61-73 (n=2) | 64-86 (n=2) |
+| 07 | 44-53 (n=5) | 62-69 (n=8) | 59-60 (n=2) | 67-74 (n=2) |
+| 11 | 61-66 (n=6) | 62-74 (n=5) | 61-64 (n=2) | 70 (n=1) |
+
+The branch is above main on every niche and every model; the gap is largest where the comp is most painted (05, 07) and smallest on the flat dashboard (11). Cost is 2-4x in turns and image calls.
