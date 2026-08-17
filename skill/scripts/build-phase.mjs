@@ -523,7 +523,16 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
     // the numbers are the edit list: keep it short enough to act on in one
     // pass (the worst first: size, then lines, then colour and place)
     const order = (f) => (/cap height/.test(f) ? 0 : /lines? in the build/.test(f) ? 1 : /heavier|lighter/.test(f) ? 2 : /ink is/.test(f) ? 3 : 4);
-    const text = [...readings.text].sort((a, b) => order(a) - order(b));
+    // sibling regions (row-1 ... row-8, item-a / item-b) with the same kind
+    // of finding are one edit: fold them into one line naming the siblings
+    const folded = new Map();
+    for (const f of readings.text) {
+      const m = /^text ([a-z0-9]+(?:-[a-z0-9]+)*?)(?:-(?:\d+|[a-z]))?: (cap height|\d+ lines? in the build|the face renders|ink is|its first line|it starts|line pitch)/i.exec(f);
+      const key = m ? `${m[1]}|${m[2].replace(/\d+/g, 'N')}` : f;
+      if (!folded.has(key)) folded.set(key, { first: f, ids: [] });
+      const idm = /^text ([^:]+):/.exec(f); if (idm) folded.get(key).ids.push(idm[1]);
+    }
+    const text = [...folded.values()].map((v) => (v.ids.length > 1 ? `${v.first} (also ${v.ids.slice(1).join(', ')})` : v.first)).sort((a, b) => order(a) - order(b));
     // A reading that has come back unchanged three attempts running is one
     // the session is not acting on (or cannot: a measured "rule" that is
     // really an underline the layout does not have). It stays in the message

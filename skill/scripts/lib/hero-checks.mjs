@@ -81,11 +81,15 @@ export function textRegionCheck(region, compCrop, buildCrop, { capTol = 0.22, mi
     if (r > 1.25) findings.push(`text ${region.id}: the face renders ${Math.round((r - 1) * 100)}% heavier than the comp's (ink density ${bfp.densTall.toFixed(2)} vs ${comp.densTall.toFixed(2)}); drop a weight step or use the ranked face`);
     else if (r < 0.75) findings.push(`text ${region.id}: the face renders ${Math.round((1 - r) * 100)}% lighter than the comp's (ink density ${bfp.densTall.toFixed(2)} vs ${comp.densTall.toFixed(2)}); raise a weight step or use the ranked face`);
   }
-  // colour: dominant ink of each crop
-  const ca = inkColor(compCrop), cb = inkColor(buildCrop);
-  if (ca && cb && ca.ink && cb.ink) {
-    const d = deltaE(ca.ink.lab, cb.ink.lab);
-    if (d > 22) findings.push(`text ${region.id}: ink is ${cb.ink.hex} in the build, ${ca.ink.hex} in the comp; use the comp's colour`);
+  // colour: dominant ink of each crop. Small type on a ruled or grainy
+  // ground (a track row across staff lines at cap 14) has no reliable ink
+  // cluster; the reading fired both ways on neighbouring rows of one list.
+  if (comp.capHeightPx >= 16) {
+    const ca = inkColor(compCrop), cb = inkColor(buildCrop);
+    if (ca && cb && ca.ink && cb.ink) {
+      const d = deltaE(ca.ink.lab, cb.ink.lab);
+      if (d > 22) findings.push(`text ${region.id}: ink is ${cb.ink.hex} in the build, ${ca.ink.hex} in the comp; use the comp's colour`);
+    }
   }
   // vertical placement inside the box: top of ink
   const ba = inkBox(compCrop), bb = inkBox(buildCrop);
