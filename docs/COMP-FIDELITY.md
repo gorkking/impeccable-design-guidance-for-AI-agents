@@ -190,3 +190,35 @@ Paul annotated 12 sweep-3 builds with pins (fonts at the wrong size, weight, col
 | 07-003 | 65 | 70 (7 attempts), then shipped | left the hero open and captured responsive anyway |
 
 Two lessons: the readings are the right numbers (they read as the pins did), and sol's discipline, not the gate, is the floor on this niche: it quits after a refused force, writes the page over an open phase, or ships from an open hero. Fixes from this sweep: readings print as an ordered "each one CSS edit" list capped at eight; a reading unchanged for three attempts becomes advisory and stops blocking; a refused force says the readings are the edits; a single link or button is not a strip; the overall shows a decimal near the floor. What the scripts cannot do is make a model keep going: that is the finish reviewer's backstop and, in the harness, a completion the run declared for itself.
+
+## The human review (2026-08-17): 32 builds, 230 pins
+
+Paul reviewed every sweep-3/4/5 build against its comp on a click-to-annotate page (pin + note per spot, pass / unsure / fail per sample). What the verdicts said about the score:
+
+| verdict | comp-diff overall of those samples |
+|---|---|
+| pass (2) | 73 (opus main 05), 70 (opus branch 11) |
+| "pass except one bug" (1) | 86 (opus branch 05: cover arch clipped by its box) |
+| unsure (9) | 61-74 |
+| fail (20) | 43-68 |
+
+So the human pass line sits at about 70-73 on comp-diff, and `HERO_MIN` at 0.72 is inside it. Every main build was a fail except one opus sample; branch builds were the only ones rated pass or unsure on 07 and 11.
+
+The pins, grouped, and what each became:
+
+| Pins (count, paraphrased) | Mechanised as |
+|---|---|
+| bad font / too thick / wrong size / wrong line height / wraps differently (≈40) | `textRegionCheck`: cap height, line count, ink density, line pitch vs the comp crop, per text region, as numbers |
+| text in the wrong place / too much spacing above (≈15) | first-line offset in px |
+| black text rendered white; text colour changed (7) | ink colour compare, also on unmeasurable (rotated) text |
+| bottom menu / footer missing, content pushed below the fold (12) | detail under 15% is `missing` before any palette relaxation |
+| menu too tall / header divider too far down (6) | strip height off the first rule row |
+| hallucinated kicker / dividers / legend / button / squares / extra copy (≈25) | invented-ink cells over a calm comp; veto at 4% of the frame or two strongly inked cells |
+| svg instead of asset, "terrible svg", drawing named as chrome (≈15) | painted-material note refusal; every region needs a note; code regions over 25% refused |
+| shape cut off / cropped / bleeds into the next element / clipping bug (9) | spec refuses a plate box whose artwork runs off it (edge contact against the page ground) |
+| button in wrong spot / not in its box (5) | control ink box and rule row |
+| "white letterboxing" on the build (7) | a review artefact: the side-by-side drew the shift-padded copy; fixed |
+| wrong / small / missing icons, arrow and dropdown style (≈15) | not mechanised: the icon concession stands; raise if icons should be held to the comp |
+| shadow / depth the comp does not have; "flat on the comp" (3) | not mechanised |
+| chart lines less dense (1) | not mechanised (a chart drawn in code) |
+| "arguably better" deviations: a colour that fixes contrast, a label moved (3) | by design: the contract wins at the hero; a stated second pass after it may change it |
