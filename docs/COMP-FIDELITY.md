@@ -175,3 +175,18 @@ Where this leaves the numbers, all sweeps, comp-diff overall against the approve
 | 11 | 61-66 (n=6) | 62-74 (n=5) | 61-64 (n=2) | 70 (n=1) |
 
 The branch is above main on every niche and every model; the gap is largest where the comp is most painted (05, 07) and smallest on the flat dashboard (11). Cost is 2-4x in turns and image calls.
+
+## Sixth sweep (2026-08-17, gpt-5.6-sol, 05 and 07, branch only, after the first human review)
+
+Paul annotated 12 sweep-3 builds with pins (fonts at the wrong size, weight, colour, or place; nav bars too tall; kickers and dividers the comp did not have; a footer strip pushed off the frame; a drawing filed as chrome with no note). Each became a hero-gate reading (`lib/hero-checks.mjs`): text cap height, line count, ink density, ink colour, and first-line offset against the comp crop; strip height off the first rule row; build ink over a calm comp cell; every region needs a note; a region with under 15% of the comp's detail is `missing` before any palette relaxation. Turn cap raised to 160.
+
+| Sample | overall | hero | what happened |
+|---|---|---|---|
+| 05-001 | 57 | 59 (1 attempt) | readings were right (artist-name cap 10 vs 15.9, track-list 3 lines vs 4, listen rule 25 vs 60, colophon ink); the model forced with a brief quote, was refused, and stopped |
+| 05-002 | 64 | 64 (1 attempt) | same: one attempt, quit |
+| 05-003 | 62 | 73 → responsive 74 → review | walked the machine |
+| 07-001 | 68 | 72 at the turn cap, 28 attempts | three readings unchanged for 20+ attempts (`browse-link` underline read as a rule; `right-part-code` cap and ink); the score printed as "72% < 72%" |
+| 07-002 | 47 | never entered (page at turn 5) | ignored the state |
+| 07-003 | 65 | 70 (7 attempts), then shipped | left the hero open and captured responsive anyway |
+
+Two lessons: the readings are the right numbers (they read as the pins did), and sol's discipline, not the gate, is the floor on this niche: it quits after a refused force, writes the page over an open phase, or ships from an open hero. Fixes from this sweep: readings print as an ordered "each one CSS edit" list capped at eight; a reading unchanged for three attempts becomes advisory and stops blocking; a refused force says the readings are the edits; a single link or button is not a strip; the overall shows a decimal near the floor. What the scripts cannot do is make a model keep going: that is the finish reviewer's backstop and, in the harness, a completion the run declared for itself.
