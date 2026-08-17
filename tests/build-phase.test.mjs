@@ -48,7 +48,7 @@ describe('comp-spec', () => {
   it('measures regions with palette, pixel box, medium, and plate path', () => {
     const comp = makeComp();
     const spec = measureRegions(comp, { allowUncovered: true, regions: [
-      { id: 'masthead', kind: 'chrome', grid: 'A0:J0' },
+      { id: 'masthead', kind: 'chrome', grid: 'A0:J0', note: 'navy masthead bar' },
       { id: 'art', kind: 'plate', grid: 'F1:J4', note: 'noise plate' },
     ] }, 'comp.png');
     assert.equal(spec.regions.length, 2);
@@ -76,18 +76,18 @@ describe('comp-spec', () => {
 
   it('refuses a code region that covers a column of the comp, unless container', () => {
     const comp = makeComp();
-    assert.throws(() => measureRegions(comp, { allowUncovered: true, regions: [{ id: 'parts-column', kind: 'chrome', grid: 'G0:J9' }] }, 'c.png'), /covers 40% of the comp/);
-    const ok = measureRegions(comp, { allowUncovered: true, regions: [{ id: 'parts-column', kind: 'chrome', grid: 'G0:J9', container: true }] }, 'c.png');
+    assert.throws(() => measureRegions(comp, { allowUncovered: true, regions: [{ id: 'parts-column', kind: 'chrome', grid: 'G0:J9', note: 'right column of parts' }] }, 'c.png'), /covers 40% of the comp/);
+    const ok = measureRegions(comp, { allowUncovered: true, regions: [{ id: 'parts-column', kind: 'chrome', grid: 'G0:J9', container: true, note: 'right column of parts' }] }, 'c.png');
     assert.equal(ok.regions[0].kind, 'chrome');
-    const plate = measureRegions(comp, { allowUncovered: true, regions: [{ id: 'art', kind: 'plate', grid: 'G0:J9' }] }, 'c.png');
+    const plate = measureRegions(comp, { allowUncovered: true, regions: [{ id: 'art', kind: 'plate', grid: 'G0:J9', note: 'noise plate' }] }, 'c.png');
     assert.equal(plate.regions[0].medium, 'raster');
   });
 
   it('refuses a regions file that leaves comp ink unnamed, unless allowUncovered', () => {
     const comp = makeComp();
     // only the masthead named: the headline, plate, and list are ink no region covers
-    assert.throws(() => measureRegions(comp, { regions: [{ id: 'masthead', kind: 'chrome', grid: 'A0:J0' }] }, 'c.png'), /carry ink no region names/);
-    const spec = measureRegions(comp, { allowUncovered: true, regions: [{ id: 'masthead', kind: 'chrome', grid: 'A0:J0' }] }, 'c.png');
+    assert.throws(() => measureRegions(comp, { regions: [{ id: 'masthead', kind: 'chrome', grid: 'A0:J0', note: 'navy masthead bar' }] }, 'c.png'), /carry ink no region names/);
+    const spec = measureRegions(comp, { allowUncovered: true, regions: [{ id: 'masthead', kind: 'chrome', grid: 'A0:J0', note: 'navy masthead bar' }] }, 'c.png');
     assert.ok(spec.uncoveredInkCells.length > 3);
   });
 
@@ -155,10 +155,10 @@ describe('build-phase state machine (CLI)', () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'build-phase-'));
     fs.writeFileSync(path.join(dir, 'comp.png'), encodePng(makeComp()));
     fs.writeFileSync(path.join(dir, 'regions.json'), JSON.stringify({ regions: [
-      { id: 'masthead', kind: 'chrome', grid: 'A0:J0' },
-      { id: 'headline', kind: 'text', grid: 'A1:D2' },
+      { id: 'masthead', kind: 'chrome', grid: 'A0:J0', note: 'navy masthead bar' },
+      { id: 'headline', kind: 'text', grid: 'A1:D2', note: 'two-line block headline' },
       { id: 'art', kind: 'plate', grid: 'F1:J4', note: 'noise plate' },
-      { id: 'list', kind: 'control', grid: 'A5:J9', container: true },
+      { id: 'list', kind: 'control', grid: 'A5:J9', container: true, note: 'ruled list rows' },
     ] }));
   });
   after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
@@ -242,7 +242,7 @@ describe('build-phase state machine (CLI)', () => {
     fs.writeFileSync(path.join(dir, '.impeccable', 'review', 'hero-repro.png'), encodePng(flat));
     // no source references the plate yet: refused before any diff runs
     let res = run(PHASE_SCRIPT, ['advance'], dir);
-    assert.equal(res.status, 2, res.stdout);
+    assert.equal(res.status, 2, res.stdout + res.stderr);
     assert.match(res.stdout, /not referenced by any source file/);
     fs.writeFileSync(path.join(dir, 'index.html'), '<img src="assets/plates/art.png" alt="">');
     res = run(PHASE_SCRIPT, ['advance'], dir);
@@ -285,8 +285,8 @@ describe('build-phase state machine (CLI)', () => {
     fillRect(comp, 40, 300, 160, 40, [19, 33, 48, 255]);
     fs.writeFileSync(path.join(d4, 'comp.png'), encodePng(comp));
     fs.writeFileSync(path.join(d4, 'regions.json'), JSON.stringify({ allowUncovered: true, regions: [
-      { id: 'masthead', kind: 'chrome', grid: 'A0:J0' },
-      { id: 'cta', kind: 'control', box: { x: 0, y: 0.5, w: 0.5, h: 0.5 } },
+      { id: 'masthead', kind: 'chrome', grid: 'A0:J0', note: 'navy masthead bar' },
+      { id: 'cta', kind: 'control', box: { x: 0, y: 0.5, w: 0.5, h: 0.5 }, note: 'black CTA button' },
     ] }));
     run(PHASE_SCRIPT, ['start', '--comp', 'comp.png', '--artifact', 'index.html'], d4);
     run(SPEC_SCRIPT, ['--comp', 'comp.png', '--regions', 'regions.json'], d4);
@@ -312,9 +312,9 @@ describe('build-phase state machine (CLI)', () => {
     const comp = makeComp();
     fs.writeFileSync(path.join(d3, 'comp.png'), encodePng(comp));
     fs.writeFileSync(path.join(d3, 'regions.json'), JSON.stringify({ allowUncovered: true, regions: [
-      { id: 'masthead', kind: 'chrome', grid: 'A0:J0' },
-      { id: 'art', kind: 'plate', grid: 'F1:J4' },
-      { id: 'list', kind: 'control', grid: 'A5:J9', container: true },
+      { id: 'masthead', kind: 'chrome', grid: 'A0:J0', note: 'navy masthead bar' },
+      { id: 'art', kind: 'plate', grid: 'F1:J4', note: 'noise plate' },
+      { id: 'list', kind: 'control', grid: 'A5:J9', container: true, note: 'ruled list rows' },
     ] }));
     run(PHASE_SCRIPT, ['start', '--comp', 'comp.png', '--artifact', 'index.html'], d3);
     run(SPEC_SCRIPT, ['--comp', 'comp.png', '--regions', 'regions.json'], d3);

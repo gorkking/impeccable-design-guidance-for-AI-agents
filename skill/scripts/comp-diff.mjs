@@ -133,6 +133,12 @@ export function bestShift(comp, build, workWidth = 256) {
 
 export function verdictFor(s, kind = null) {
   const painted = kind === 'plate' || kind === 'image' || kind === 'texture';
+  // Nothing drawn where the comp drew something is missing whatever the
+  // palette says: a footer strip the build pushed below the fold read as
+  // 'drift' on ground colour alone (detail 4%, structure 92%). detailRaw is
+  // 1 when the comp region itself is calm, so a low value already means the
+  // comp had material there.
+  if (s.detailRaw != null && s.detailRaw < 0.15) return 'missing';
   if (painted && s.detail < 0.5) return 'missing';
   // For text, chrome, and controls "missing" means the build has nothing
   // there, not that a thin strip sits a few pixels off: require the build's

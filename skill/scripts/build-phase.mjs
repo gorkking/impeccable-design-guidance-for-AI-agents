@@ -69,7 +69,8 @@ import { createRequire } from 'node:module';
 import { decodePng, loadRaster } from './lib/png.mjs';
 const require = createRequire(import.meta.url);
 import { crop, createImage, blit } from './lib/raster.mjs';
-import { compare, verdictFor } from './comp-diff.mjs';
+import { compare, verdictFor, alignBuild, bestShift } from './comp-diff.mjs';
+import { textRegionCheck, chromeStripCheck, inventedInk } from './lib/hero-checks.mjs';
 import { SPEC_PATH, BUILD_DIR, loadSpec, plateReference } from './comp-spec.mjs';
 import { choiceStamped } from './font-match.mjs';
 
@@ -357,6 +358,32 @@ export function organicClipRegions(artifactFile, spec) {
   return out;
 }
 
+/** Fraction of grid cells with invented ink that fails the hero. */
+export const INVENTED_MIN = 0.04;
+
+/**
+ * Text, chrome and invented-ink readings for the hero: the comp and the
+ * build aligned the way comp-diff aligns them, then per-region checks from
+ * lib/hero-checks.mjs. Returns { text: [], chrome: [], invented }.
+ */
+export function heroReadings(state, spec, buildPath) {
+  if (!spec || !state.comp) return null;
+  const comp = loadRaster(state.comp).image;
+  const build = loadRaster(buildPath).image;
+  let aligned = alignBuild(comp, build, 'top');
+  const shift = bestShift(comp, aligned);
+  if (shift.dx || shift.dy) { const shifted = createImage(aligned.width, aligned.height, [255, 255, 255, 255]); blit(shifted, aligned, -shift.dx, -shift.dy); aligned = shifted; }
+  const text = [], chrome = [];
+  for (const r of spec.regions) {
+    if (!r.px) continue;
+    const a = crop(comp, r.px.x, r.px.y, r.px.w, r.px.h), b = crop(aligned, r.px.x, r.px.y, r.px.w, r.px.h);
+    if (r.kind === 'text') { const t = textRegionCheck(r, a, b); text.push(...t.findings); }
+    else if (r.kind === 'chrome' || r.kind === 'control') { const c = chromeStripCheck(r, a, b); chrome.push(...c.findings); }
+  }
+  const invented = inventedInk(comp, aligned);
+  return { text, chrome, invented };
+}
+
 export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, min = HERO_MIN, outDir = path.join('.impeccable', 'review', 'diff', 'hero'), artifact = null } = {}) {
   if (!fs.existsSync(buildPath)) return { ok: false, reasons: [`no hero capture at ${buildPath}: screenshot the first viewport at the comp's own dimensions (${state.breakpoint || 'comp size'}) into that path`] };
   const specForRefs = loadSpec(specPath);
@@ -468,6 +495,20 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   if (artifactFile && fs.existsSync(artifactFile) && specForRefs) {
     const organic = organicClipRegions(artifactFile, specForRefs);
     for (const r of organic) reasons.push(`artifact draws an organic clip-path (${r.snippet}) inside raster region ${r.id}'s box; that region ships as its plate, never as a polygon`);
+  }
+  // Numbers a designer reads off the side-by-side: type set at the wrong
+  // size, weight, colour, or place; a nav bar too tall; ink where the comp
+  // has none (a kicker, a divider, a second row). Each was a pin in the
+  // first human review of builds the region scores had passed.
+  let readings = null;
+  try { readings = heroReadings(state, specForRefs, buildPath); } catch (e) { reasons.push(`hero readings errored (${e.message}); the region scores above stand`); }
+  if (readings) {
+    for (const f of readings.text) reasons.push(f);
+    for (const f of readings.chrome) reasons.push(f);
+    if (readings.invented && readings.invented.fraction >= INVENTED_MIN) {
+      const cells = readings.invented.cells.map((c) => c.label);
+      reasons.push(`the build carries ink in ${cells.length} grid cells where the comp is calm (${cells.slice(0, 12).join(', ')}${cells.length > 12 ? ', ...' : ''}); nothing exists on the page that the comp does not show (a kicker, an extra nav item, a divider, a second row of controls); remove it or name it in a stated decision after the hero passes`);
+    }
   }
   const worstRegions = [...report.regions].sort((a, b) => a.score.overall - b.score.overall).slice(0, 3);
   const regionDir = path.join(outDir, 'regions');

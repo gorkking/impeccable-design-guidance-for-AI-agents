@@ -135,6 +135,13 @@ export function measureRegions(comp, regionsInput, compPath) {
     if (seen.has(raw.id)) throw new Error(`duplicate region id ${raw.id}`);
     seen.add(raw.id);
     const kind = raw.kind && KINDS.has(raw.kind) ? raw.kind : 'band';
+    // Every region says what it is. The note is what the plate prompt, the
+    // gate messages, and the painted-material check read; a regions file of
+    // bare ids and kinds is a list of boxes, and a session that named a
+    // carburetor drawing "chrome" with no note was caught by nothing.
+    if (kind !== 'band' && !(raw.note && String(raw.note).trim().length >= 8)) {
+      throw new Error(`region ${raw.id} has no note. Say in a few words what the comp shows there (the element, its material, its role): the note drives the plate prompt and the gate's messages, and a drawing named as chrome is only caught by what its note says.`);
+    }
     // The note is the model's own reading of the region. A note that names
     // painted material (a drawing, diagram, photo, illustration, texture)
     // filed under a code kind is a plate about to be redrawn in SVG: the

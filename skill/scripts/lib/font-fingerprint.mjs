@@ -134,8 +134,14 @@ function findLines(bin) {
   // carburetor drawing). When several lines exist, ones far taller than the
   // median are not lettering: leave them out of the mass reference and out
   // of the result.
-  if (lines.length >= 3) {
-    const hs = lines.map((l) => l.y1 - l.y0).sort((a, b) => a - b);
+  // The median is taken over lines carrying real mass (rule slivers and
+  // tittles do not vote), and needs three of them: two 145px headline lines
+  // above a 26px artist line were dropped as 'tall' against a median pulled
+  // to 28 by three slivers.
+  const massMax = Math.max(1, ...lines.map((l) => l.mass));
+  const real = lines.filter((l) => l.mass >= massMax * 0.05);
+  if (real.length >= 3) {
+    const hs = real.map((l) => l.y1 - l.y0).sort((a, b) => a - b);
     const medH = hs[Math.floor(hs.length / 2)];
     for (const ln of lines) if (ln.y1 - ln.y0 > medH * 3) ln.tall = true;
   }
