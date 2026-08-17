@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { encodePng } from '../skill/scripts/lib/png.mjs';
-import { createImage, fillRect, blit, resize } from '../skill/scripts/lib/raster.mjs';
+import { createImage, fillRect, blit, resize, drawText } from '../skill/scripts/lib/raster.mjs';
 import { gridToBox, measureRegions, platePrompt } from '../skill/scripts/comp-spec.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -20,8 +20,10 @@ function lcg(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 10139
 function makeComp(w = 640, h = 400) {
   const img = createImage(w, h, [240, 237, 226, 255]);
   fillRect(img, 0, 0, w, 40, [19, 33, 48, 255]);
-  fillRect(img, 20, 60, 220, 20, [19, 33, 48, 255]);
-  fillRect(img, 20, 90, 180, 20, [19, 33, 48, 255]);
+  // two lines of block lettering (raster.mjs bitmap font) so the headline
+  // region measures as type: cap ~40px at scale 5
+  drawText(img, 'KEEP OLD', 20, 52, [19, 33, 48, 255], 4);
+  drawText(img, 'IRON', 20, 88, [19, 33, 48, 255], 4);
   const rnd = lcg(3);
   for (let y = 40; y < 200; y++) for (let x = 320; x < 640; x++) {
     const v = 100 + Math.floor(rnd() * 140);
@@ -58,6 +60,18 @@ describe('comp-spec', () => {
     assert.equal(spec.regions[0].medium, 'semantic');
     assert.equal(spec.orientation, 'landscape');
     assert.match(platePrompt(spec, art), /noise plate/);
+  });
+
+  it('refuses a code kind whose note describes painted material, unless codeDrawn', () => {
+    const comp = makeComp();
+    const painted = { id: 'rack', kind: 'chrome', grid: 'F1:J4', note: 'countable four-carburetor technical geometry with blue leaders, an exploded diagram' };
+    assert.throws(() => measureRegions(comp, { allowUncovered: true, regions: [painted] }, 'c.png'), /describes painted material/);
+    const ok = measureRegions(comp, { allowUncovered: true, regions: [{ ...painted, codeDrawn: true }] }, 'c.png');
+    assert.equal(ok.regions[0].kind, 'chrome');
+    const table = measureRegions(comp, { allowUncovered: true, regions: [{ id: 'index', kind: 'chrome', grid: 'F1:J4', note: 'ruled discussion table with thread, author, replies columns' }] }, 'c.png');
+    assert.equal(table.regions[0].kind, 'chrome');
+    const plate = measureRegions(comp, { allowUncovered: true, regions: [{ ...painted, kind: 'plate' }] }, 'c.png');
+    assert.equal(plate.regions[0].medium, 'raster');
   });
 
   it('refuses a regions file that leaves comp ink unnamed, unless allowUncovered', () => {
@@ -165,6 +179,25 @@ describe('build-phase state machine (CLI)', () => {
     res = run(FONT_SCRIPT, ['--measure', 'headline'], dir);
     assert.equal(res.status, 0, res.stderr);
     assert.match(res.stdout, /MEASURE headline/);
+    // a face typed straight into spec.json is refused: only font-match's own
+    // stamped choice closes the spec
+    const specFile = path.join(dir, '.impeccable', 'build', 'spec.json');
+    const spec = JSON.parse(fs.readFileSync(specFile, 'utf8'));
+    const head = spec.regions.find((r) => r.id === 'headline');
+    assert.ok(head.type && head.type.comp, 'the test comp headline measures as type');
+    {
+      head.type.chosen = { family: 'Arial Narrow', weight: 700, fontSizePx: 40, source: 'system-fallback' };
+      fs.writeFileSync(specFile, JSON.stringify(spec, null, 2));
+      res = run(PHASE_SCRIPT, ['advance'], dir);
+      assert.equal(res.status, 2, res.stdout);
+      assert.match(res.stdout, /font-match did not write/);
+      // no browser in the test env either way: --rank records the catalog's nearest face, stamped
+      res = run(FONT_SCRIPT, ['--rank', 'headline', '--text', 'HEADLINE'], dir);
+      assert.equal(res.status, 0, res.stderr);
+      assert.match(res.stdout, /USE font-family/);
+      const after = JSON.parse(fs.readFileSync(specFile, 'utf8')).regions.find((r) => r.id === 'headline');
+      assert.ok(after.type.chosen && after.type.chosen.stamp, 'font-match stamps its choice');
+    }
     res = run(PHASE_SCRIPT, ['advance'], dir);
     assert.equal(res.status, 0, res.stdout + res.stderr);
     assert.match(res.stdout, /ADVANCED spec -> plates/);
@@ -222,9 +255,13 @@ describe('build-phase state machine (CLI)', () => {
 
   it('hero gate reports a control whose ink box differs from the comp, and never throws on the report shape', () => {
     const d4 = fs.mkdtempSync(path.join(os.tmpdir(), 'build-phase-ctrl-'));
+    // a discrete CTA (a 160x40 button at 40,300) inside a larger control region;
+    // the build renders it half-height. Rules that span the region are erased so
+    // the comp's ink box is the button, not the region clipped.
     const comp = makeComp();
+    fillRect(comp, 0, 200, 320, 200, [240, 237, 226, 255]);
+    fillRect(comp, 40, 300, 160, 40, [19, 33, 48, 255]);
     fs.writeFileSync(path.join(d4, 'comp.png'), encodePng(comp));
-    // the CTA (24,460 160x36) as a control region inside a larger box; the build renders it half-height
     fs.writeFileSync(path.join(d4, 'regions.json'), JSON.stringify({ allowUncovered: true, regions: [
       { id: 'masthead', kind: 'chrome', grid: 'A0:J0' },
       { id: 'cta', kind: 'control', box: { x: 0, y: 0.5, w: 0.5, h: 0.5 } },
@@ -237,8 +274,7 @@ describe('build-phase state machine (CLI)', () => {
     // three table rows and the CTA. Shrink the ink there: erase and redraw the rows half-height.
     const build = { ...comp, data: new Uint8Array(comp.data) };
     fillRect(build, 0, 200, 320, 200, [240, 237, 226, 255]);
-    fillRect(build, 20, 232, 300, 6, [19, 33, 48, 255]);
-    fillRect(build, 20, 282, 300, 6, [19, 33, 48, 255]);
+    fillRect(build, 40, 300, 160, 18, [19, 33, 48, 255]);
     fs.mkdirSync(path.join(d4, '.impeccable', 'review'), { recursive: true });
     fs.writeFileSync(path.join(d4, '.impeccable', 'review', 'hero-repro.png'), encodePng(build));
     fs.writeFileSync(path.join(d4, 'index.html'), '<button>x</button>');

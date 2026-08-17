@@ -35,6 +35,12 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Text every catalog face is rendered with; covers caps, x-height letters, ascenders, descenders, digits. */
 export const INDEX_TEXT = 'The quick brown fox jumps over the lazy dog 0123456789 HAMBURGEVONS';
+/** All-caps variant, rendered at the large cap size only: a caps headline
+ *  crop has no x-height band, so its features (advance, run lengths, vertical
+ *  profile) belong to a different distribution than mixed-case text; matching
+ *  a caps crop against mixed-case renders ranked barcode faces above the
+ *  headline's own family. */
+export const INDEX_TEXT_CAPS = 'THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789 HAMBURGEVONS';
 export const INDEX_WEIGHTS = [300, 400, 700];
 const METADATA_URL = 'https://fonts.google.com/metadata/fonts';
 const CATEGORY_MAP = { 'Sans Serif': 'sans', Serif: 'serif', Display: 'display', Handwriting: 'handwriting', Monospace: 'mono' };
@@ -61,9 +67,9 @@ export function entriesFromMetadata(meta, { weights = INDEX_WEIGHTS } = {}) {
 }
 
 /** Serialize decoded entries into the on-disk shape (see lib/font-index.mjs). */
-export function serializeIndex(entries, { text = INDEX_TEXT, sizes = INDEX_SIZES } = {}) {
+export function serializeIndex(entries, { text = INDEX_TEXT, textCaps = INDEX_TEXT_CAPS, sizes = INDEX_SIZES } = {}) {
   const rows = entries.map((e) => [e.family, e.weight, Math.max(0, CATEGORIES.indexOf(e.category)), e.variable ? 1 : 0, ...sizes.map((sz) => (e.fp?.[sz] ? packVector(e.fp[sz]) : null))]);
-  return JSON.stringify({ schema: 1, text, sizes, features: INDEX_FEATURES, categories: CATEGORIES, entries: rows });
+  return JSON.stringify({ schema: 2, text, textCaps, sizes, features: INDEX_FEATURES, categories: CATEGORIES, entries: rows });
 }
 
 const gfHref = (f, w) => `https://fonts.googleapis.com/css2?family=${encodeURIComponent(f).replace(/%20/g, '+')}:wght@${w}&display=block`;
@@ -103,18 +109,31 @@ async function main() {
   let entries = entriesFromMetadata(meta);
   if (only) entries = entries.filter((e) => only.has(e.family));
   if (sample) { const fams = [...new Set(entries.map((e) => e.family))].slice(0, sample); const keep = new Set(fams); entries = entries.filter((e) => keep.has(e.family)); }
+  // --resume keeps entries already in --out. An entry whose fp is missing a
+  // size the current INDEX_SIZES names (a schema-1 index before `48c`) is
+  // re-rendered for the missing sizes only.
   const done = new Map();
   if (has('resume') && fs.existsSync(out)) {
     const { loadFontIndex } = await import('../skill/scripts/lib/font-index.mjs');
-    for (const e of loadFontIndex(out).entries) done.set(`${e.family}:${e.weight}`, e);
+    for (const e of loadFontIndex(out).entries) {
+      const missing = INDEX_SIZES.filter((sz) => !e.fp[sz]);
+      if (missing.length && missing.length < INDEX_SIZES.length) e.missing = missing;
+      done.set(`${e.family}:${e.weight}`, e);
+    }
   }
+  const renderSize = async (e, sz) => (typeof sz === 'string' && sz.endsWith('c') ? fingerprintFace(page, e, parseInt(sz, 10), INDEX_TEXT_CAPS) : fingerprintFace(page, e, sz, INDEX_TEXT));
   const pw = require('playwright');
   const browser = await pw.chromium.launch();
   const page = await browser.newPage({ viewport: { width: 3000, height: 300 }, deviceScaleFactor: 1 });
-  const results = [...done.values()];
+  const results = [...done.values()].filter((e) => !e.missing);
   const failures = [];
   const byFam = new Map();
-  for (const e of entries) { if (done.has(`${e.family}:${e.weight}`)) continue; if (!byFam.has(e.family)) byFam.set(e.family, []); byFam.get(e.family).push(e); }
+  for (const e of entries) {
+    const prev = done.get(`${e.family}:${e.weight}`);
+    if (prev && !prev.missing) continue;
+    if (!byFam.has(e.family)) byFam.set(e.family, []);
+    byFam.get(e.family).push(prev ? { ...e, prev } : e);
+  }
   const fams = [...byFam.keys()];
   const t0 = Date.now(); let n = 0;
   for (let i = 0; i < fams.length; i += 20) {
@@ -125,10 +144,11 @@ async function main() {
     for (const e of todo) {
       n++;
       try {
-        const fp = {};
-        for (const sz of INDEX_SIZES) fp[sz] = await fingerprintFace(page, e, sz, INDEX_TEXT);
+        const fp = e.prev ? { ...e.prev.fp } : {};
+        for (const sz of (e.prev ? e.prev.missing : INDEX_SIZES)) fp[sz] = await renderSize(e, sz);
         if (!fp[INDEX_SIZES[0]]) { failures.push({ ...e, reason: 'not loaded or no lettering' }); continue; }
-        results.push({ ...e, fp });
+        const { prev, ...clean } = e;
+        results.push({ ...clean, fp });
       } catch (err) { failures.push({ ...e, reason: err.message.slice(0, 120) }); }
     }
     fs.mkdirSync(path.dirname(out), { recursive: true });

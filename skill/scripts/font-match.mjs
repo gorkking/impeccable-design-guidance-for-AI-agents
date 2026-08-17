@@ -35,6 +35,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 import { decodePng, encodePng, loadRaster } from './lib/png.mjs';
 import { crop } from './lib/raster.mjs';
 import { fingerprint, distance } from './lib/font-fingerprint.mjs';
@@ -155,16 +156,38 @@ export function selectCandidates(fp, { own = [], index = null, n = 25, category 
   return { candidates, catalog, source };
 }
 
+/**
+ * A choice font-match wrote carries a stamp over its own fields, so the spec
+ * gate can tell a measured choice from a hand-typed one. Sessions with no
+ * browser wrote `"chosen": { "family": "Arial Narrow", "source": "system-fallback" }`
+ * straight into spec.json to get past the gate; that is the guess the gate
+ * exists to refuse. Not secret, just not something a model reaches for.
+ */
+export function stampChoice(regionId, chosen) {
+  const h = createHash('sha1').update(`font-match:${regionId}:${chosen.family}:${chosen.weight}:${chosen.fontSizePx}:${chosen.source}`).digest('hex').slice(0, 12);
+  return { ...chosen, stamp: h };
+}
+export function choiceStamped(regionId, chosen) {
+  if (!chosen || !chosen.stamp) return false;
+  return stampChoice(regionId, { ...chosen, stamp: undefined }).stamp === chosen.stamp;
+}
+
 // ---- browser --------------------------------------------------------------
 
 async function loadBrowser() {
+  // IMPECCABLE_NODE_MODULES: a node_modules dir holding playwright or
+  // puppeteer, for harnesses that mount the skill somewhere its own resolution
+  // roots cannot see (a sandbox root, a plugin cache). NODE_PATH works too.
+  const extra = (process.env.IMPECCABLE_NODE_MODULES || '').split(path.delimiter).filter(Boolean);
   const tries = [
+    ...extra.map((dir) => () => require(require.resolve('playwright', { paths: [dir, path.dirname(dir)] }))),
     () => require('playwright'),
     () => require(require.resolve('playwright', { paths: [process.cwd()] })),
     () => require(require.resolve('playwright', { paths: [path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')] })),
   ];
   for (const t of tries) { try { const pw = t(); if (pw?.chromium) return { kind: 'playwright', mod: pw }; } catch { /* next */ } }
   const tries2 = [
+    ...extra.map((dir) => () => require(require.resolve('puppeteer', { paths: [dir, path.dirname(dir)] }))),
     () => require('puppeteer'),
     () => require(require.resolve('puppeteer', { paths: [process.cwd()] })),
     () => require(require.resolve('puppeteer', { paths: [path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')] })),
@@ -346,7 +369,22 @@ async function main() {
   const transform = arg('transform', fp.allCaps ? 'uppercase' : 'none');
   const results = await renderCandidates(candidates, text, fp.capHeightPx, { transform });
   if (!results) {
-    console.log(`RANK unavailable: no browser (playwright or puppeteer) resolvable from this project or the impeccable CLI. ${index ? 'Take the CATALOG line as the ranking' : 'Choose by the MEASURE line'}: match the width class first, then the weight class; render one headline word against the comp before building on it.`);
+    // No browser: the catalog fingerprint index is the ranking. Its top hit is
+    // recorded as the chosen face (source `catalog`) so the spec gate has a
+    // measured choice to close on; without this the gate refused forever and
+    // sessions forced past it or spent ten turns installing Playwright.
+    // font-size is estimated from the cap height at a 0.70 cap/em ratio, the
+    // sans display median; the NOTE says to check one rendered word.
+    if (index && catalog[0]) {
+      const best = catalog[0];
+      const fontSizePx = Math.round(fp.capHeightPx / 0.70);
+      console.log(`RANK unavailable: no browser (playwright or puppeteer) resolvable from this project or the impeccable CLI; the CATALOG order stands as the ranking.`);
+      console.log(`USE font-family: '${best.family}'; font-weight: ${best.weight}; font-size: ${fontSizePx}px;${transform !== 'none' ? ` text-transform: ${transform};` : ''} NOTE font-size is estimated (cap ${fp.capHeightPx}px / 0.70); render one headline word at that size, compare its cap height to the comp crop, and correct the size before building on it.`);
+      region.type.chosen = stampChoice(id, { family: best.family, weight: best.weight, fontSizePx, source: 'catalog', estimatedSize: true });
+      fs.writeFileSync(specPath, JSON.stringify(spec, null, 2));
+      return;
+    }
+    console.log(`RANK unavailable: no browser (playwright or puppeteer) resolvable from this project or the impeccable CLI, and no catalog index. Choose by the MEASURE line: match the width class first, then the weight class; render one headline word against the comp before building on it.`);
     return;
   }
   // Drop faces that never loaded (a weight the family does not ship falls
@@ -388,7 +426,7 @@ async function main() {
     const variable = bestEntry ? bestEntry.variable : true;
     if (dwt != null && Math.abs(dwt) > 0.15 && variable) advice.push(dwt > 0 ? `too heavy: drop to weight ${Math.max(100, best.weight - 200)}` : `too light: raise to weight ${Math.min(900, best.weight + 200)}`);
     console.log(`USE font-family: '${best.family}'; font-weight: ${best.weight}; font-size: ${best.fontSizePx}px;${transform !== 'none' ? ` text-transform: ${transform};` : ''}${advice.length ? ' NOTE ' + advice.join('; ') : ''}`);
-    region.type.chosen = { family: best.family, weight: best.weight, fontSizePx: best.fontSizePx, source, fp: compactFp(best.fp) };
+    region.type.chosen = stampChoice(id, { family: best.family, weight: best.weight, fontSizePx: best.fontSizePx, source, fp: compactFp(best.fp) });
     fs.writeFileSync(specPath, JSON.stringify(spec, null, 2));
   }
 }

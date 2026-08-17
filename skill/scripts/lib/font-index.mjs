@@ -27,14 +27,18 @@ import { fileURLToPath } from 'node:url';
 import { FEATURES, STATS, distance } from './font-fingerprint.mjs';
 
 export const INDEX_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data', 'font-index.json');
-export const INDEX_SIZES = [48, 14];
+/** Cap heights the catalog is rendered at. `48c` is the same 48px cap in ALL
+ *  CAPS text (schema 2), queried for caps crops; a schema-1 index without it
+ *  routes caps crops to the mixed-case 48 as before. */
+export const INDEX_SIZES = [48, 14, '48c'];
 /** Crops with a cap height under this many px query the 14px index. */
 export const ROUTE_CAP_PX = 22;
 /** Below this cap height the fingerprint is not trustworthy; callers size by the box instead. */
 export const MIN_RANK_CAP_PX = 10;
 export const CATEGORIES = ['sans', 'serif', 'display', 'handwriting', 'mono'];
 /** The features the index stores: the ones the fitted distance gives nonzero weight. */
-export const INDEX_FEATURES = FEATURES.filter((k) => STATS[k] && STATS[k].w > 0);
+export const GROSS_FEATURES = ['advance', 'advTall', 'advX', 'densTall', 'densX', 'stemW'];
+export const INDEX_FEATURES = FEATURES.filter((k) => (STATS[k] && STATS[k].w > 0) || GROSS_FEATURES.includes(k));
 
 const NULL_TOKEN = '___';
 const MAX_Q = 36 ** 3 - 1;
@@ -80,9 +84,10 @@ export function loadFontIndex(file = INDEX_PATH) {
 }
 
 /** Which of the index's cap sizes a crop with this cap height should query. */
-export function routeSize(capHeightPx, sizes = INDEX_SIZES) {
-  const sorted = [...sizes].sort((a, b) => a - b);
-  return capHeightPx < ROUTE_CAP_PX ? sorted[0] : sorted[sorted.length - 1];
+export function routeSize(capHeightPx, sizes = INDEX_SIZES, { allCaps = false } = {}) {
+  const numeric = sizes.filter((s) => typeof s === 'number').sort((a, b) => a - b);
+  if (allCaps && capHeightPx >= ROUTE_CAP_PX && sizes.includes('48c')) return '48c';
+  return capHeightPx < ROUTE_CAP_PX ? numeric[0] : numeric[numeric.length - 1];
 }
 
 /**
@@ -90,13 +95,23 @@ export function routeSize(capHeightPx, sizes = INDEX_SIZES) {
  * Returns [{ family, weight, category, variable, d, size }] sorted by distance;
  * at most `perFamily` entries of one family so the shortlist spans faces, not weights.
  */
-export function candidatesFromIndex(fp, index, { n = 25, category = null, perFamily = 2 } = {}) {
+/**
+ * Faces that are not lettering: barcodes, redaction bars, placeholder "flow"
+ * text, dingbats, symbol fonts, and effect faces (outlines, shades, glitch,
+ * pixel, 3D) whose fingerprint lands near heavy condensed text without being
+ * usable as it. A comp headline never wants them; a caller who does can pass
+ * them by name in `--candidates`.
+ */
+export const NON_TEXT_FAMILY = /barcode|^redacted|^flow (block|circular|rounded)|dings|symbols|^bungee (hairline|outline|shade|spice)|^rubik (80s|beastly|broken|bubbles|burned|dirt|distressed|doodle|gemstones|glitch|iso|lines|marker|maze|microbe|moonrocks|pixels|puddles|scribble|spray|storm|vinyl|wet)|^(nabla|honk|kablammo|sixtyfour|workbench|codystar|rock 3d|zen dots|ballet|butcherman|creepster|eater|faster one|frijole|nosifer|metal mania|miltonian)/i;
+
+export function candidatesFromIndex(fp, index, { n = 25, category = null, perFamily = 2, includeNonText = false } = {}) {
   if (!fp || !index) return [];
-  const size = routeSize(fp.capHeightPx, index.sizes);
+  const size = routeSize(fp.capHeightPx, index.sizes, { allCaps: !!fp.allCaps });
   const wantCat = category ? String(category).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean) : null;
   const scored = [];
   for (const e of index.entries) {
     if (wantCat && !wantCat.includes(e.category)) continue;
+    if (!includeNonText && NON_TEXT_FAMILY.test(e.family)) continue;
     const v = e.fp[size];
     if (!v) continue;
     const d = distance(fp, v);

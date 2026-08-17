@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { createImage, drawText } from '../skill/scripts/lib/raster.mjs';
 import { fingerprint, distance, FEATURES, STATS } from '../skill/scripts/lib/font-fingerprint.mjs';
-import { loadFontIndex, candidatesFromIndex, routeSize, packVector, unpackVector, INDEX_PATH, INDEX_FEATURES, ROUTE_CAP_PX } from '../skill/scripts/lib/font-index.mjs';
+import { loadFontIndex, candidatesFromIndex, routeSize, packVector, unpackVector, INDEX_PATH, INDEX_FEATURES, ROUTE_CAP_PX, GROSS_FEATURES, NON_TEXT_FAMILY } from '../skill/scripts/lib/font-index.mjs';
 import { widthClass, weightClass, selectCandidates, SHORTLIST, renderCandidates } from '../skill/scripts/font-match.mjs';
 
 const require = createRequire(import.meta.url);
@@ -70,18 +70,19 @@ describe('font-index', () => {
     assert.equal(back.gap, null, 'absent feature reads as null');
   });
 
-  it('stores only the features the fitted distance weights', () => {
+  it('stores the features the fitted distance weights plus the gross width and weight readings', () => {
     assert.ok(INDEX_FEATURES.length >= 30);
-    for (const k of INDEX_FEATURES) assert.ok(STATS[k].w > 0);
-    for (const k of FEATURES) if (STATS[k].w === 0) assert.ok(!INDEX_FEATURES.includes(k), `${k} has zero weight and should not be indexed`);
+    for (const k of INDEX_FEATURES) assert.ok(STATS[k].w > 0 || GROSS_FEATURES.includes(k), `${k} is indexed without weight or gross role`);
+    for (const k of FEATURES) if (STATS[k].w === 0 && !GROSS_FEATURES.includes(k)) assert.ok(!INDEX_FEATURES.includes(k), `${k} has zero weight and should not be indexed`);
+    for (const k of GROSS_FEATURES) assert.ok(INDEX_FEATURES.includes(k), `${k} is a gross reading and must be indexed`);
   });
 
-  it('ships a two-size catalog index under 1 MB with > 2500 entries and the expected keys', () => {
+  it('ships a three-render catalog index under 1.5 MB with > 2500 entries and the expected keys', () => {
     assert.ok(fs.existsSync(INDEX_PATH), `missing ${INDEX_PATH}`);
-    assert.ok(fs.statSync(INDEX_PATH).size < 1024 * 1024, 'index over 1 MB');
+    assert.ok(fs.statSync(INDEX_PATH).size < 1.5 * 1024 * 1024, 'index over 1.5 MB');
     const index = loadFontIndex();
     assert.ok(index.entries.length > 2500, `entries ${index.entries.length}`);
-    assert.deepEqual([...index.sizes].sort((a, b) => a - b), [14, 48]);
+    assert.deepEqual([...index.sizes].map(String).sort(), ['14', '48', '48c']);
     assert.deepEqual(index.features, INDEX_FEATURES);
     for (const e of index.entries.slice(0, 50)) {
       for (const k of ['family', 'weight', 'category', 'variable', 'fp']) assert.ok(k in e, `entry missing ${k}`);
@@ -90,7 +91,8 @@ describe('font-index', () => {
       for (const k of INDEX_FEATURES) assert.ok(k in e.fp[48]);
     }
     const lg = index.entries.find((e) => e.family === 'League Gothic');
-    assert.ok(lg && lg.fp[48] && lg.fp[14], 'League Gothic at both sizes');
+    assert.ok(lg && lg.fp[48] && lg.fp[14] && lg.fp['48c'], 'League Gothic at all three renders');
+    assert.ok(lg.fp['48c'].advTall != null && lg.fp['48c'].densTall != null, 'gross readings stored on the caps render');
     assert.ok(lg.fp[48].advX < 0.45, `League Gothic reads condensed: advX ${lg.fp[48].advX}`);
     const with14 = index.entries.filter((e) => e.fp[14]).length;
     assert.ok(with14 > 2500, `14px vectors ${with14}`);
@@ -101,6 +103,16 @@ describe('font-index', () => {
     const lg = index.entries.find((e) => e.family === 'League Gothic');
     assert.equal(routeSize(72), 48);
     assert.equal(routeSize(ROUTE_CAP_PX - 1), 14);
+    assert.equal(routeSize(72, index.sizes, { allCaps: true }), '48c', 'caps crops route to the caps render');
+    assert.equal(routeSize(ROUTE_CAP_PX - 1, index.sizes, { allCaps: true }), 14, 'small caps crops still route to the small size');
+    assert.equal(routeSize(72, [48, 14], { allCaps: true }), 48, 'a schema-1 index without 48c falls back');
+    // barcode / effect faces never come back as candidates
+    const capsFp = { ...lg.fp['48c'], capHeightPx: 72, allCaps: true };
+    const caps = candidatesFromIndex(capsFp, index, { n: 25 });
+    assert.equal(caps[0].family, 'League Gothic');
+    assert.equal(caps[0].size, '48c');
+    assert.ok(caps.every((c) => !NON_TEXT_FAMILY.test(c.family)));
+    assert.ok(NON_TEXT_FAMILY.test('Libre Barcode 128 Text') && NON_TEXT_FAMILY.test('Redacted') && !NON_TEXT_FAMILY.test('Rubik') && !NON_TEXT_FAMILY.test('Bungee'));
     const big = candidatesFromIndex({ ...lg.fp[48], capHeightPx: 72 }, index, { n: 25 });
     assert.equal(big.length, 25);
     assert.equal(big[0].family, 'League Gothic');

@@ -71,6 +71,7 @@ const require = createRequire(import.meta.url);
 import { crop, createImage, blit } from './lib/raster.mjs';
 import { compare, verdictFor } from './comp-diff.mjs';
 import { SPEC_PATH, BUILD_DIR, loadSpec, plateReference } from './comp-spec.mjs';
+import { choiceStamped } from './font-match.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const STATE_PATH = path.join(BUILD_DIR, 'state.json');
@@ -218,6 +219,7 @@ export function gateSpec(state, { specPath = SPEC_PATH } = {}) {
     const lead = measurable[0] || textRegions[0];
     if (!lead.type) reasons.push(`the lead text region ${lead.id} has no type measurement: run node ${HERE}/font-match.mjs --measure ${lead.id} (and --rank ${lead.id} --text "<its first words>" to choose the face by metrics). Set font-size from the printed cap height; do not pick a face by name.`);
     else if (lead.type.comp && !lead.type.chosen) reasons.push(`the lead text region ${lead.id} is measured (${lead.type.widthClass} ${lead.type.weightClass}, cap ${lead.type.comp.capHeightPx}px) but no face is ranked: run node ${HERE}/font-match.mjs --rank ${lead.id} --text "<its first words>" [--candidates "Family:weight,..."] and use the USE line.`);
+    else if (lead.type.comp && lead.type.chosen && !choiceStamped(lead.id, lead.type.chosen)) reasons.push(`the lead text region ${lead.id} carries a "chosen" face that font-match did not write (${lead.type.chosen.family || '?'}). A face typed into spec.json is the guess this gate exists to refuse; run node ${HERE}/font-match.mjs --rank ${lead.id} --text "<its first words>" and let it record the choice (with no browser it records the catalog's nearest face).`);
     const unmeasured = textRegions.slice(1).filter((r) => !r.type).map((r) => r.id);
     if (unmeasured.length && !reasons.length) reasons.push(`measure the other text regions too, each sets its own font-size and weight class: node ${HERE}/font-match.mjs --measure <id> for ${unmeasured.join(', ')}`);
   }
@@ -407,7 +409,9 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   // Controls: report the ink box in comp vs build so a button in a 63px row
   // built into a 41px row is named as numbers, not as a drift score.
   for (const r of report.regions) {
-    if (r.kind !== 'control' || r.verdict === 'match') continue;
+    // whatever the region's verdict: a small button in a large region scores
+    // match on the region mean while being half its comp height
+    if (r.kind !== 'control') continue;
     if (r.inkBox && r.inkBox.comp && r.inkBox.build) {
       // Only when the comp's ink is a discrete element inside its region (a
       // button, a tab), not when it fills the region edge to edge (a control
@@ -416,8 +420,15 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
       const rwN = r.w ?? (r.box && r.box.w) ?? 1, rhN = r.h ?? (r.box && r.box.h) ?? 1;
       const rw = rwN * (report.compSize ? parseInt(String(report.compSize).split('x')[0], 10) : 1536);
       const rh = rhN * (report.compSize ? parseInt(String(report.compSize).split('x')[1], 10) : 1024);
-      if (r.inkBox.comp.w >= rw * 0.9 && r.inkBox.comp.h >= rh * 0.9) continue;
+      // A bar that spans the region in either axis is not a discrete
+      // control: its ink box is the region box clipped, and the build's
+      // box is whatever the region clips there. Comparing the two told one
+      // session six times that a 1376x87 strip was 1382x102, and no edit it
+      // made could move that number.
+      if (r.inkBox.comp.w >= rw * 0.85 || r.inkBox.comp.h >= rh * 0.85) continue;
       const dh = r.inkBox.build.h - r.inkBox.comp.h, dw = r.inkBox.build.w - r.inkBox.comp.w;
+      // the build's box is only comparable when it is discrete too
+      if (r.inkBox.build.w >= rw * 0.98 || r.inkBox.build.h >= rh * 0.98) continue;
       if (Math.abs(dh) > Math.max(6, r.inkBox.comp.h * 0.15) || Math.abs(dw) > Math.max(12, r.inkBox.comp.w * 0.15)) reasons.push(`region ${r.id}: its ink sits in a ${r.inkBox.comp.w}x${r.inkBox.comp.h}px box in the comp and ${r.inkBox.build.w}x${r.inkBox.build.h}px in the build (padding, row height, or size); match the box, not only the position`);
     }
   }
@@ -572,7 +583,7 @@ export function advance(state, { force = false, reason = null, gateOpts = {} } =
 export function nextInstruction(state) {
   switch (state.phase) {
     case 'comps': return `Comp round for the chosen direction${state.direction ? ` (seed ${state.direction})` : ''}: read reference/visualize.md, generate three compositional comps of the requested surface at its own viewport into ${MOCKS_DIR}/ (each with a prompt sidecar), put them in front of the user, and set "approved": true in the chosen comp's sidecar. Then build-phase.mjs advance. No page code before this closes.`;
-    case 'spec': return `Measure the comp: node comp-spec.mjs --comp ${state.comp} --grid, open ${path.join(BUILD_DIR, 'comp-grid.png')}, write regions.json (every illustration, photo, texture as its own plate region; every text block its own text region), run comp-spec.mjs --comp ${state.comp} --regions regions.json. Then measure the type: node font-match.mjs --measure <id> for each text region (cap height, width class, weight class) and font-match.mjs --rank <lead text region> --text "<its first words>" to choose the headline face by metrics (the USE line is the CSS). Then build-phase.mjs advance.`;
+    case 'spec': return `Measure the comp: node comp-spec.mjs --comp ${state.comp} --grid, open ${path.join(BUILD_DIR, 'comp-grid.png')}, write regions.json (every illustration, photo, texture as its own plate region; every text block its own text region), run comp-spec.mjs --comp ${state.comp} --regions regions.json. Then measure the type: node font-match.mjs --measure <id> for each text region (cap height, width class, weight class) and font-match.mjs --rank <lead text region> --text "<its first words>" to choose the headline face by metrics (the USE line is the CSS; with no browser it records the catalog's nearest face, which is the choice; do not install one, and do not write a chosen face into the spec by hand). Then build-phase.mjs advance.`;
     case 'plates': return 'Produce every plate in the spec (comp-spec.mjs --print lists them). Illustrations, photos, figures: comp-spec.mjs --crop <id>, then generate-image.mjs --plate <id> (or the harness image tool with the crop as reference and the comp-spec plate prompt). A line drawing or figure on flat ground is keyed to alpha automatically (PLATE-CHROMA): place it with a plain <img> over the page\'s own ground, never on a second paper. An opaque plate whose ground differs from the page goes in with mix-blend-mode: multiply. Textures (paper, cloth, grain): do not generate first; crop a clean patch of the comp region (comp-spec.mjs --crop <id> --raw, then cut a patch free of ink), mirror-tile it to the plate size, and save it as the plate; generate only when no clean patch exists. The gate scores a texture against its whole region box, so a texture region should be drawn around clean ground (a sample cell), not around the ink it sits under; the page tiles it wherever the material goes. Then build-phase.mjs advance. Write no page code before this passes.';
     case 'hero': return `Build only the first viewport at ${state.breakpoint || 'the comp size'}. Copy the comp's words verbatim in this phase (headline, labels, table cells, footer): the user approved that comp with those words, and rewriting is a later, stated decision, never a silent one here. Set every text region's font-size from its measured cap height and its face from the ranking. Plates first: place every plate at its spec box (comp-spec.mjs --print lists boxes as percentages of the viewport) with object-fit: cover before writing a line of text or a control, capture into ${HERO_REPRO}, and run build-phase.mjs record hero (not advance) once so you see the plate regions read as match before text exists; then lay the semantic layer (text, controls, rules) over the plates from the spec's palette and boxes, capture, advance. When it fails, open the region crops it lists first, in order, then fix; do not build past the hero until it passes.`;
     case 'sections': return 'Build the remaining sections inside the spec system (same corner language, rules, and palette; nothing the comp does not show). The hero passed with the comp\'s words verbatim; from here, content beyond the comp is yours to author at full fidelity, and any change to words the comp showed is a stated decision in your report, never silent. Then build-phase.mjs advance.';

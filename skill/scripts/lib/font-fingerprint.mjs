@@ -187,7 +187,7 @@ function lineMetrics(bin, ln) {
   }
   const dsc = cols.filter((c) => c.bot > baseF + tol * 1.5 && c.top < baseF - R * 0.3).map((c) => (c.bot - baseF) / R);
   const descRatio = dsc.length >= 4 ? pct(dsc, 0.9) : null;
-  return { base, R, cap: R, xh, descRatio, tol, xL: cols[0].x, xR: cols[cols.length - 1].x + 1, hs };
+  return { base, R, cap: R, xh, descRatio, tol, xL: cols[0].x, xR: cols[cols.length - 1].x + 1, hs, ln };
 }
 
 /** Glyph boxes: column runs of ink inside the x band, so ascender/descender bridges do not merge letters. */
@@ -227,9 +227,18 @@ function measure(bin, lines) {
   const vprof = new Float64Array(VBINS); const hruns = [], vruns = [], colHs = [], widths = [];
   const advTall = [], advAll = [], advX = [], gaps = [], stems = [], thins = [], serifR = [], round = [], densTall = [], densX = [];
   let capSum = 0, capN = 0;
-  for (const ln of lines) {
-    const m = lineMetrics(bin, ln);
-    if (!m) continue;
+  // One crop, one case. In a multi-line all-caps headline one line can grow a
+  // spurious x-height from crossbars (the A and E arms of "JAPANESE" at 0.32R)
+  // while its neighbours report none; that line then measures its stems and
+  // its x band on the crossbar zone. Lines vote: when most lines see no
+  // x-height, none does.
+  const metrics = lines.map((ln) => lineMetrics(bin, ln)).filter(Boolean);
+  if (metrics.length >= 2) {
+    const withX = metrics.filter((m) => m.xh).length;
+    if (withX * 2 <= metrics.length) for (const m of metrics) m.xh = null;
+  }
+  for (const m of metrics) {
+    const ln = m.ln;
     const { base, cap, xh, tol, xL, xR } = m;
     capSum += cap; capN++;
     if (xh) per.xh.push(xh / cap);
@@ -325,10 +334,67 @@ function measure(bin, lines) {
  * fingerprint(img) -> features, or null when no lettering is found. Upsamples (bilinear) when the
  * cap height is under 24px so runs and edges are measured on finer pixels.
  */
-export function fingerprint(img, { minCap = 24, minGlyphs = 3 } = {}) {
+/**
+ * Keep the dominant lettering in a region crop: the lines whose cap height is
+ * within `tol` of the tallest, clipped horizontally to their own ink. A comp
+ * region drawn on a 10x10 grid over-covers: the headline crop carries the
+ * first line of body copy below it and a slice of the neighbouring column,
+ * and every one of those small letters pulls stem width, run lengths and the
+ * x-height vote toward a lighter, wider face. Returns { lines, x0, x1 } in
+ * the binarized image, or null when nothing survives.
+ */
+export function isolateDominant(bin, lines, { tol = 0.28 } = {}) {
+  const ms = lines.map((ln) => ({ ln, m: lineMetrics(bin, ln) })).filter((x) => x.m);
+  if (!ms.length) return null;
+  const capMax = Math.max(...ms.map((x) => x.m.cap));
+  const keep = ms.filter((x) => x.m.cap >= capMax * (1 - tol));
+  // horizontal extent of the kept lines' tallest ink columns only: a small
+  // column of body text beside the headline shares its rows but not its height
+  const { W, ink } = bin;
+  let x0 = W, x1 = 0;
+  for (const { ln, m } of keep) {
+    const top = Math.round(m.base - m.cap * 0.75);
+    for (let x = m.xL; x < m.xR; x++) {
+      let tall = false;
+      for (let y = top; y < m.base && !tall; y++) if (ink[y * W + x]) tall = true;
+      if (!tall) continue;
+      // a column is headline ink when a run of at least 0.5 cap of ink stands in it
+      let run = 0, best = 0;
+      for (let y = ln.y0; y < ln.y1; y++) { if (ink[y * W + x]) { run++; if (run > best) best = run; } else run = 0; }
+      if (best >= m.cap * 0.5) { if (x < x0) x0 = x; if (x + 1 > x1) x1 = x + 1; }
+    }
+  }
+  if (x1 <= x0) return null;
+  // grow the box by half a cap so glyph sides and the tracking gap survive
+  const pad = Math.round(capMax * 0.5);
+  return { lines: keep.map((x) => x.ln), x0: Math.max(0, x0 - pad), x1: Math.min(W, x1 + pad), dropped: ms.length - keep.length };
+}
+
+function maskOutside(bin, x0, x1, lines) {
+  const { W, H, ink, covA } = bin;
+  const keepRow = new Uint8Array(H);
+  for (const ln of lines) for (let y = ln.y0; y < ln.y1; y++) keepRow[y] = 1;
+  const ink2 = new Uint8Array(ink.length), cov2 = new Float32Array(covA.length);
+  for (let y = 0; y < H; y++) {
+    if (!keepRow[y]) continue;
+    for (let x = x0; x < x1; x++) { const i = y * W + x; ink2[i] = ink[i]; cov2[i] = covA[i]; }
+  }
+  return { ...bin, ink: ink2, covA: cov2, cov: (i) => cov2[i] };
+}
+
+export function fingerprint(img, { minCap = 24, minGlyphs = 3, isolate = true } = {}) {
   let bin = binarize(img);
   let { lines } = findLines(bin);
   if (!lines.length) return null;
+  let isolated = 0;
+  if (isolate && lines.length > 1) {
+    const iso = isolateDominant(bin, lines);
+    if (iso && (iso.dropped > 0 || iso.x1 - iso.x0 < bin.W * 0.9)) {
+      bin = maskOutside(bin, iso.x0, iso.x1, iso.lines);
+      lines = findLines(bin).lines.length ? findLines(bin).lines : iso.lines;
+      isolated = iso.dropped;
+    }
+  }
   let f = measure(bin, lines);
   // fewer than minGlyphs separable glyphs is not lettering (a rule, a solid
   // bar, one letterform): callers read null as "no separable lettering"
@@ -343,7 +409,7 @@ export function fingerprint(img, { minCap = 24, minGlyphs = 3 } = {}) {
     if (f2) f = f2;
     else scale = 1;
   }
-  const r = { lines: lines.length, glyphs: f.glyphs, capHeightPx: +(f.capHeightPx / scale).toFixed(1), inkIsDark: bin.inkIsDark, upsampled: scale > 1, allCaps: f.allCaps, weight: f.densTall == null && f.densX == null ? null : +(f.densTall ?? f.densX).toFixed(4) };
+  const r = { lines: lines.length, glyphs: f.glyphs, capHeightPx: +(f.capHeightPx / scale).toFixed(1), inkIsDark: bin.inkIsDark, upsampled: scale > 1, allCaps: f.allCaps, isolatedFrom: isolated, weight: f.densTall == null && f.densX == null ? null : +(f.densTall ?? f.densX).toFixed(4) };
   for (const k of FEATURES) r[k] = f[k] == null ? null : +f[k].toFixed(4);
   return r;
 }
@@ -396,8 +462,37 @@ export const STATS = {
 export const Z_CLIP = 3;
 
 /** Weighted L1 over z-scored features; a feature missing on either side is skipped and the weight mass renormalized. */
-export function distance(a, b, stats = STATS, { p = 1, zClip = Z_CLIP } = {}) {
+/**
+ * The two readings a designer makes before any detail: how wide, how heavy.
+ * Width from the advance of tall glyphs (all-caps crops) or x-height glyphs;
+ * weight from ink density of tall glyphs. Both are on the same scale in the
+ * comp crop and in a catalog render, so their gap is a plain ratio. Distance
+ * adds a penalty that grows with the ratio's log: a face 50% wider or 35%
+ * lighter than the comp cannot rank above one that is right on both, whatever
+ * its run-length profile says. Weighted like three fine features (the width
+ * gap and the weight gap each score up to zClip x 1.5).
+ */
+export function grossGap(a, b) {
+  const pick = (f, keys) => { for (const k of keys) if (f[k] != null) return { k, v: f[k] }; return null; };
+  const wa = pick(a, ['advX', 'advTall', 'advance']), wb = wa ? (b[wa.k] != null ? { k: wa.k, v: b[wa.k] } : null) : null;
+  const ha = pick(a, ['densTall', 'densX', 'stemW']), hb = ha ? (b[ha.k] != null ? { k: ha.k, v: b[ha.k] } : null) : null;
+  const gap = (x, y) => (x && y && x.v > 0 && y.v > 0 ? Math.abs(Math.log(y.v / x.v)) : null);
+  return { width: gap(wa, wb), weight: gap(ha, hb) };
+}
+
+export const GROSS_STD = { width: 0.12, weight: 0.12 }; // one "step" of width class or weight class, in log ratio
+export const GROSS_W = 1.5;
+
+export function distance(a, b, stats = STATS, { p = 1, zClip = Z_CLIP, gross = true } = {}) {
   let d = 0, wsum = 0;
+  if (gross) {
+    const g = grossGap(a, b);
+    for (const k of ['width', 'weight']) {
+      if (g[k] == null) continue;
+      const z = Math.min(zClip, g[k] / GROSS_STD[k]);
+      d += GROSS_W * (p === 1 ? z : z * z); wsum += GROSS_W;
+    }
+  }
   for (const k of FEATURES) {
     const s = stats[k]; if (!s || !s.w) continue;
     const av = a[k], bv = b[k];

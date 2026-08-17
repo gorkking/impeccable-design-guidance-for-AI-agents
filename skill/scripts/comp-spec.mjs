@@ -87,6 +87,9 @@ function paletteOf(img) {
   return dominantColors(img, 5).map(({ hex, coverage }) => ({ hex, coverage }));
 }
 
+/** Words in a region note that name painted material rather than code-drawn UI. */
+export const PAINTED_NOTE = /\b(diagram|drawing|drawn|illustrat\w*|figure|schematic|exploded|photo\w*|picture|painting|painted|render\w*|artwork|engraving|etching|linework|line art|texture\w*|grain|paper|fabric|halftone|watercolou?r|sketch\w*|blueprint|technical geometry|carburetor geometry|product shot|hero image|3d)\b/i;
+
 function energyOf(img) {
   const g = detailGrid(img, 4, 4, 256);
   let s = 0; for (const v of g.cells) s += v;
@@ -129,6 +132,14 @@ export function measureRegions(comp, regionsInput, compPath) {
     if (seen.has(raw.id)) throw new Error(`duplicate region id ${raw.id}`);
     seen.add(raw.id);
     const kind = raw.kind && KINDS.has(raw.kind) ? raw.kind : 'band';
+    // The note is the model's own reading of the region. A note that names
+    // painted material (a drawing, diagram, photo, illustration, texture)
+    // filed under a code kind is a plate about to be redrawn in SVG: the
+    // exploded carburetor "chrome" that the hero gate then scores missing.
+    // Refuse at the spec, where the fix is one word, not at the hero.
+    if (raw.note && !RASTER_KINDS.has(kind) && kind !== 'band' && PAINTED_NOTE.test(raw.note) && !raw.codeDrawn) {
+      throw new Error(`region ${raw.id} is kind "${kind}" but its note describes painted material ("${raw.note}"). Anything drawn, photographed, or textured ships as a raster plate: set kind to plate (illustration, diagram, figure), image (photograph), or texture (ground). If the note is wrong and code really draws it (a table, a rule, a chrome bar), reword the note or set "codeDrawn": true on the region.`);
+    }
     const box = raw.box && typeof raw.box.x === 'number' ? raw.box : gridToBox(raw.grid);
     const px = { x: Math.round(box.x * comp.width), y: Math.round(box.y * comp.height), w: Math.round(box.w * comp.width), h: Math.round(box.h * comp.height) };
     const c = crop(comp, px.x, px.y, px.w, px.h);
