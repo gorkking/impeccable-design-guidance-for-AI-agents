@@ -115,4 +115,24 @@ Why the machinery was skipped, in order of blame:
 
 Read the earlier "exec cut, packet C, ask names the phased build" row and this sweep's four phased samples together: same model, same comp, and the phased build lands 10-15 points above the one-write build every time it actually runs. The open question is not whether the phases help but whether a resumed session enters them; that is a packet property, and it is now validated at cut time.
 
-Next: re-cut 07, 05, 11 on the fixed branch skill (state.json verified in each packet), sol-only rerun at n=3 (~$40), then opus if the sol delta holds.
+## Third sweep (2026-08-17, gpt-5.6-sol, re-cut packets carrying state.json, n=2-3): the phases run, and they win
+
+Packets re-cut with the phase state reconstructed at the pick (replay now re-executes `build-phase.mjs` verbs and the OpenAI worker pulls the sandbox's `.impeccable/build/` before close). Baseline = main skill via `IMPECCABLE_SKILL_DIR`, branch = this branch's dist. About $60.
+
+| Niche | main (n=3) | branch (n=2) | branch hero |
+|---|---|---|---|
+| 05-experimental-album | 53%, 53%, 56% (all contradicted) | **66%, 77%** (drift) | 77%, 78% |
+| 07-vintage-moto-forum | 46%, 47% (contradicted) | **62%, 64%** (drift; hero open at 63/68%) | 63%, 68% |
+| 11-analytics-dashboard | 66%, 61%, 66% (drift) | **72%, 71%** (drift) | 76%, 80% |
+
+Every branch sample ran the phase machine (`state.json` at hero or later); every main sample resumed at `comps` and wrote the page in one pass. Mean delta on comp-diff overall: 05 +18, 07 +17, 11 +7. Branch runs cost 2-4x (turn cap at 100-110 on four of six; wall clock 60 min).
+
+What the traces said, and what changed from them:
+
+- **Font ranking without a browser was a dead end.** Sessions spent 6-10 turns installing Playwright or hand-typed a `chosen` face into spec.json. Now: the catalog index has an all-caps render (`48c`), non-text faces are excluded, the distance carries a gross width/weight gap, and with no browser `--rank` records the catalog's nearest face; the gate refuses a `chosen` it did not stamp. The eval worker lends its Playwright to the sandbox.
+- **Painted material filed as chrome.** 07's exploded carburetor and rack drawing were `chrome` regions "drawn in code", then scored missing at the hero with no fix available. `comp-spec` now refuses a code kind whose note names painted material.
+- **A passed plate is placed material.** With the plates referenced and passing the plates gate, comp-diff at the region box still called them `missing` on detail (the plate's carburetor is not the comp's carburetor at pixel level). The hero now scores a passed plate on placement (present in the box, at the box) and says the box as numbers.
+- **The control ink-box veto blocked a full-width bar six times** ("1376x87 vs 1382x102"), unmovable by any edit. It now applies only to discrete controls.
+- **Plate generation polled turn by turn** (8 `write_stdin` empty polls per plate); the NEXT line now says to wait long.
+
+Not yet measured: the last three fixes landed after this sweep. Next: rerun sol at n=3 on the same packets to confirm the delta holds with fewer turns, then opus.

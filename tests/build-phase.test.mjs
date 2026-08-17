@@ -241,6 +241,19 @@ describe('build-phase state machine (CLI)', () => {
     assert.match(res.stdout, /GATE HERO FAILED/);
     assert.match(res.stdout, /region art is missing/);
     assert.ok(fs.existsSync(path.join(dir, '.impeccable', 'review', 'diff', 'hero', 'side-by-side.png')));
+    // the plates gate recorded the plate on the state
+    let st = JSON.parse(fs.readFileSync(path.join(dir, '.impeccable', 'build', 'state.json'), 'utf8'));
+    assert.ok(st.plates && st.plates.art && st.plates.art.status === 'ok', 'plate row travels on the state');
+    // a passed plate that IS drawn in the box (a different noise field, so its
+    // content re-scores low) is placed material: the hero says placement,
+    // never 'missing', and only when the box is off
+    const placed = createImage(comp.width, comp.height, [240, 237, 226, 255]);
+    fillRect(placed, 0, 0, comp.width, 40, [19, 33, 48, 255]);
+    const rnd2 = lcg(11);
+    for (let y = 40; y < 200; y++) for (let x = 320; x < 640; x++) { const v = 100 + Math.floor(rnd2() * 140); const q = (y * comp.width + x) * 4; placed.data[q] = v; placed.data[q + 1] = v; placed.data[q + 2] = v; }
+    fs.writeFileSync(path.join(dir, '.impeccable', 'review', 'hero-repro.png'), encodePng(placed));
+    res = run(PHASE_SCRIPT, ['advance'], dir);
+    assert.doesNotMatch(res.stdout, /region art is missing/);
     // faithful: the comp shifted by a few px, captured at 1.5x width
     const shifted = createImage(comp.width, comp.height, [240, 237, 226, 255]);
     blit(shifted, comp, 3, 2);
@@ -249,7 +262,7 @@ describe('build-phase state machine (CLI)', () => {
     assert.equal(res.status, 0, res.stdout);
     assert.match(res.stdout, /ADVANCED hero -> sections/);
     const state = JSON.parse(fs.readFileSync(path.join(dir, '.impeccable', 'build', 'state.json'), 'utf8'));
-    assert.equal(state.phases.hero.attempts, 3);
+    assert.equal(state.phases.hero.attempts, 4);
     assert.ok(state.phases.hero.gate.score >= 0.72);
   });
 

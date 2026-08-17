@@ -400,7 +400,30 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
     if (inkPresent) { r.verdict = 'drift'; return false; }
     return true;
   });
-  for (const r of missing) reasons.push(`region ${r.id} is missing (detail ${(r.score.detail * 100).toFixed(0)}%, structure ${(r.score.structure * 100).toFixed(0)}%): the comp shows material the build does not`);
+  // A plate that passed the plates gate and is referenced by the page is
+  // placed material, not missing material: comp-diff at the region box
+  // re-litigates the plate's content (an exploded diagram of a different
+  // carburetor scores 'missing' on detail against the comp's), and no CSS
+  // edit can move that score. What the hero owes for a passed plate is its
+  // placement: material present in the box, at the box. Say that as a box.
+  const passedPlate = (id) => state.plates && state.plates[id] && state.plates[id].status === 'ok' && (state.plates[id].score == null || state.plates[id].score >= PLATE_MIN);
+  const placementNotes = [];
+  for (const r of report.regions) {
+    if (!(r.kind === 'plate' || r.kind === 'image') || !passedPlate(r.id)) continue;
+    if (r.verdict !== 'missing' && r.verdict !== 'contradicted') continue;
+    const present = r.score.detailRaw != null ? r.score.detailRaw >= 0.3 : r.score.detail >= 0.3;
+    if (!present) continue; // nothing drawn there: still missing
+    r.verdict = 'drift';
+    r.placed = true;
+    if (r.inkBox && r.inkBox.comp && r.inkBox.build) {
+      const c = r.inkBox.comp, b = r.inkBox.build;
+      const off = Math.abs(b.w - c.w) > c.w * 0.2 || Math.abs(b.h - c.h) > c.h * 0.2 || Math.abs(b.x - c.x) > c.w * 0.15 || Math.abs(b.y - c.y) > c.h * 0.15;
+      if (off) placementNotes.push(`plate ${r.id} is placed but not at the comp's box: its ink spans ${c.w}x${c.h}px at (${c.x},${c.y}) in the comp region and ${b.w}x${b.h}px at (${b.x},${b.y}) in the build; size and position the <img> to the spec box (object-fit: cover), not to the surrounding layout`);
+    }
+  }
+  const missingAfter = missing.filter((r) => r.verdict === 'missing');
+  for (const r of missingAfter) reasons.push(`region ${r.id} is missing (detail ${(r.score.detail * 100).toFixed(0)}%, structure ${(r.score.structure * 100).toFixed(0)}%): the comp shows material the build does not`);
+  for (const n of placementNotes) reasons.push(n);
   const contradicted = report.regions.filter((r) => r.verdict === 'contradicted');
   // A contradicted plate, image, or text region is the wrong page whatever
   // the mean says; chrome and controls get the one-third allowance.
@@ -559,6 +582,9 @@ export function advance(state, { force = false, reason = null, gateOpts = {} } =
   const gate = runGate(state, phase, gateOpts);
   const { plates: _p, ...gateRecord } = gate;
   p.gate = { ...gateRecord, at: now() };
+  // the plates gate's per-plate scores are what the hero gate reads to tell
+  // a placed plate from a missing one, so they travel on the state
+  if (phase === 'plates' && Array.isArray(gate.plates)) state.plates = Object.fromEntries(gate.plates.map((pl) => [pl.id, { status: pl.status, score: pl.score, size: pl.size }]));
   if (!gate.ok && force && !forceAllowed(reason)) {
     p.status = 'open';
     return { ok: false, phase, reasons: [...gate.reasons, `--force refused: "${reason || ''}" does not quote the user downgrading the comp. A single-file deliverable, a missing tool, or difficulty is not a reason; embed the plate as a data URI, produce it with the harness image tool, or ask the user.`], gate };
@@ -584,7 +610,7 @@ export function nextInstruction(state) {
   switch (state.phase) {
     case 'comps': return `Comp round for the chosen direction${state.direction ? ` (seed ${state.direction})` : ''}: read reference/visualize.md, generate three compositional comps of the requested surface at its own viewport into ${MOCKS_DIR}/ (each with a prompt sidecar), put them in front of the user, and set "approved": true in the chosen comp's sidecar. Then build-phase.mjs advance. No page code before this closes.`;
     case 'spec': return `Measure the comp: node comp-spec.mjs --comp ${state.comp} --grid, open ${path.join(BUILD_DIR, 'comp-grid.png')}, write regions.json (every illustration, photo, texture as its own plate region; every text block its own text region), run comp-spec.mjs --comp ${state.comp} --regions regions.json. Then measure the type: node font-match.mjs --measure <id> for each text region (cap height, width class, weight class) and font-match.mjs --rank <lead text region> --text "<its first words>" to choose the headline face by metrics (the USE line is the CSS; with no browser it records the catalog's nearest face, which is the choice; do not install one, and do not write a chosen face into the spec by hand). Then build-phase.mjs advance.`;
-    case 'plates': return 'Produce every plate in the spec (comp-spec.mjs --print lists them). Illustrations, photos, figures: comp-spec.mjs --crop <id>, then generate-image.mjs --plate <id> (or the harness image tool with the crop as reference and the comp-spec plate prompt). A line drawing or figure on flat ground is keyed to alpha automatically (PLATE-CHROMA): place it with a plain <img> over the page\'s own ground, never on a second paper. An opaque plate whose ground differs from the page goes in with mix-blend-mode: multiply. Textures (paper, cloth, grain): do not generate first; crop a clean patch of the comp region (comp-spec.mjs --crop <id> --raw, then cut a patch free of ink), mirror-tile it to the plate size, and save it as the plate; generate only when no clean patch exists. The gate scores a texture against its whole region box, so a texture region should be drawn around clean ground (a sample cell), not around the ink it sits under; the page tiles it wherever the material goes. Then build-phase.mjs advance. Write no page code before this passes.';
+    case 'plates': return 'Produce every plate in the spec (comp-spec.mjs --print lists them). Illustrations, photos, figures: comp-spec.mjs --crop <id>, then generate-image.mjs --plate <id> (or the harness image tool with the crop as reference and the comp-spec plate prompt). A generation takes 30 to 90 seconds: run it with a long wait (a 90 s yield, or all plates in one command joined with &&) rather than polling an open session turn after turn. A line drawing or figure on flat ground is keyed to alpha automatically (PLATE-CHROMA): place it with a plain <img> over the page\'s own ground, never on a second paper. An opaque plate whose ground differs from the page goes in with mix-blend-mode: multiply. Textures (paper, cloth, grain): do not generate first; crop a clean patch of the comp region (comp-spec.mjs --crop <id> --raw, then cut a patch free of ink), mirror-tile it to the plate size, and save it as the plate; generate only when no clean patch exists. The gate scores a texture against its whole region box, so a texture region should be drawn around clean ground (a sample cell), not around the ink it sits under; the page tiles it wherever the material goes. Then build-phase.mjs advance. Write no page code before this passes.';
     case 'hero': return `Build only the first viewport at ${state.breakpoint || 'the comp size'}. Copy the comp's words verbatim in this phase (headline, labels, table cells, footer): the user approved that comp with those words, and rewriting is a later, stated decision, never a silent one here. Set every text region's font-size from its measured cap height and its face from the ranking. Plates first: place every plate at its spec box (comp-spec.mjs --print lists boxes as percentages of the viewport) with object-fit: cover before writing a line of text or a control, capture into ${HERO_REPRO}, and run build-phase.mjs record hero (not advance) once so you see the plate regions read as match before text exists; then lay the semantic layer (text, controls, rules) over the plates from the spec's palette and boxes, capture, advance. When it fails, open the region crops it lists first, in order, then fix; do not build past the hero until it passes.`;
     case 'sections': return 'Build the remaining sections inside the spec system (same corner language, rules, and palette; nothing the comp does not show). The hero passed with the comp\'s words verbatim; from here, content beyond the comp is yours to author at full fidelity, and any change to words the comp showed is a stated decision in your report, never silent. Then build-phase.mjs advance.';
     case 'motion': return 'Add the signature interaction, reveals, and motion. Then build-phase.mjs advance.';

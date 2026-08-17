@@ -138,7 +138,14 @@ export function verdictFor(s, kind = null) {
   // there, not that a thin strip sits a few pixels off: require the build's
   // own energy to be near zero relative to the comp (rawScore, before the
   // added-detail penalty), and drift for a mere misalignment.
-  if (!painted && s.detail < 0.35 && s.structure < 0.6) return (s.detailRaw != null && s.detailRaw < 0.2) ? 'missing' : 'contradicted';
+  if (!painted && s.detail < 0.35 && s.structure < 0.6) {
+    if (s.detailRaw != null && s.detailRaw < 0.2) return 'missing';
+    // low detail with structure and palette both holding is grain the build
+    // renders flatter (a spine of rotated type on textured red), not a
+    // different composition
+    if (s.structure >= 0.5 && s.color >= 0.5) return 'drift';
+    return 'contradicted';
+  }
   if (s.detail < 0.35 && s.structure < 0.6) return 'missing';
   // Structure is the one thing a wrong-but-busy region cannot fake: noise,
   // a mirrored crop, a swapped column, a tile shuffle all keep color and
