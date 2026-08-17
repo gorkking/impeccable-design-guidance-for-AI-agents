@@ -103,4 +103,16 @@ What it says so far:
 - The hero gate at 72% is reachable (77% on the ask run) but the model's second and third attempts moved the score by one point each: it edits CSS values when the diff says a region is missing. The gate's message now names the region and the failure mode; the next lever is making the region crops the thing the model looks at (it opened the side-by-side once and the crops never).
 - Whether a greenfield session enters comp-led at all is decided in the direction round, before any of this. Two of five full-journey samples (one per skill) skipped the comp round and wrote code; the config default is comp-led and image generation was on. That routing gap is separate from this change and worth its own fix.
 
-Next: cut fresh packets on the branch skill for 02 and 07, sweep both lanes (openai + anthropic) at n=3, add one Operate niche (11-analytics-dashboard, plates near-empty) and one mobile niche (23-transit-mobile, portrait comp).
+## Second sweep (2026-08-16, sol + opus-5, three niches, n=2-3): the packets, not the skill
+
+37 execution-cut runs on 05-experimental-album, 07-vintage-moto-forum, 11-analytics-dashboard, main vs branch, about $210. Result: 33 of 37 samples never entered the phase machine (`nostate`: no `.impeccable/build/state.json` at the end), so main and branch scored the same (50-60% overall, mostly `contradicted`) and the sweep measured nothing about the change. The four samples that did run the phases (11-opus-branch, 11-opus-branch-b) reached hero 69-72% and 63-66% overall, the highest opus scores in the sweep, at 80-100 turns and $9-12.
+
+Why the machinery was skipped, in order of blame:
+
+1. **The packets carried no state.** The 07 packet was cut on 2026-08-12, before `build-phase.mjs start` existed; the 05 and 11 packets were cut on the branch, but the session generated its comps before running `start`, so `pending.json` was written and `state.json` never was. Every gate reads `state.json`; a resume with none has nothing to follow. Two fixes: `generate-image.mjs` refuses to write a comp under `.impeccable/mocks/` while `pending.json` is set and no state exists (the direction pick must be recorded first), and impeccable-evals `factory-validation` fails a `composition-approved` candidate whose workspace lacks a closed comps phase.
+2. **Prefix inertia.** A resumed model follows the conversation it is in. When the prefix ends on "translating comp C into HTML now", the mounted skill files are not re-read whatever they say. The procedure has to be on disk at the resume point (state.json + the `NEXT` line), which is what (1) restores.
+3. **WebP comps.** gpt-image returned WebP for some cuts; `comp-spec` demanded PNG, so the session rewrote the `.webp` in place with PNG bytes, which broke replay ("a later step rewrites this path beyond the cut"). `loadRaster()` now converts through a sibling `<file>.png` cache and never touches the source.
+
+Read the earlier "exec cut, packet C, ask names the phased build" row and this sweep's four phased samples together: same model, same comp, and the phased build lands 10-15 points above the one-write build every time it actually runs. The open question is not whether the phases help but whether a resumed session enters them; that is a packet property, and it is now validated at cut time.
+
+Next: re-cut 07, 05, 11 on the fixed branch skill (state.json verified in each packet), sol-only rerun at n=3 (~$40), then opus if the sol delta holds.
