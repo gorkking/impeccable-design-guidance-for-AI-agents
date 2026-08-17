@@ -222,3 +222,17 @@ The pins, grouped, and what each became:
 | shadow / depth the comp does not have; "flat on the comp" (3) | not mechanised |
 | chart lines less dense (1) | not mechanised (a chart drawn in code) |
 | "arguably better" deviations: a colour that fixes contrast, a label moved (3) | by design: the contract wins at the hero; a stated second pass after it may change it |
+| a note by the model itself: "the grid boxes straddle two elements, CSS cannot fix the structure penalty" | it was right: text and control regions now snap to the largest ink mass in their span |
+
+Two verdict boundaries the review drew: close-enough icon glyphs are acceptable; arrows, chevrons, dropdown chrome, and control borders and fills are the comp's (controls are held like text at the hero now).
+
+## Seventh sweep (2026-08-17, claude-opus-5, 05 and 07, branch, after all pins, 160 turns)
+
+| Sample | overall | hero | what happened |
+|---|---|---|---|
+| 05-001 | 67 | 73 in 22 attempts, turn cap | passed the hero, ran out of turns before responsive |
+| 05-002 | **80 (match)** | 81 in 13 attempts, then asked the user, was told to build as written, forced (recorded, legitimate) | stalled on eight per-row readings of the track list; those now fold into one line |
+| 07-001 | 43 | 39, one look | API connection dropped at turn 52 |
+| 07-002 | 68 | 67 in 2 attempts, then declared done | wrote a note diagnosing the grid boxes as the structure penalty (correct; fixed by snapping) |
+
+Opus with the readings reaches the human pass line on 05 (73-81 at the hero, 80 overall on the second) at 13-22 attempts, and the model's own diagnosis of the remaining structure penalty pointed at the region boxes, which now snap to their ink.
