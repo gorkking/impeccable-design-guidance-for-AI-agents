@@ -119,11 +119,23 @@ function findLines(bin) {
   // (few letters reach it, so the valley rule fires) or a stray rule. Ascender
   // bands merge back into the line below them; anything else is dropped.
   for (const ln of lines) { let m = 0; for (let yy = ln.y0; yy < ln.y1; yy++) m += rowInk[yy]; ln.mass = m; }
-  const maxMass = Math.max(0, ...lines.map((l) => l.mass));
+  // A drawing or photo sharing the crop with body copy is one tall, massive
+  // 'line' that would carry maxMass and drop every real line under the 30%
+  // rule (a 461x307 thread crop measured as one 160px 'cap' off a
+  // carburetor drawing). When several lines exist, ones far taller than the
+  // median are not lettering: leave them out of the mass reference and out
+  // of the result.
+  if (lines.length >= 3) {
+    const hs = lines.map((l) => l.y1 - l.y0).sort((a, b) => a - b);
+    const medH = hs[Math.floor(hs.length / 2)];
+    for (const ln of lines) if (ln.y1 - ln.y0 > medH * 3) ln.tall = true;
+  }
+  const maxMass = Math.max(0, ...lines.filter((l) => !l.tall).map((l) => l.mass));
   const merged = [];
   for (let i = 0; i < lines.length; i++) {
     const ln = lines[i];
-    if (ln.mass >= maxMass * 0.3) { merged.push({ y0: ln.y0, y1: ln.y1 }); continue; }
+    if (ln.tall) continue;
+    if (ln.mass >= maxMass * 0.3) { merged.push({ y0: ln.y0, y1: ln.y1, mass: ln.mass }); continue; }
     const next = lines[i + 1];
     if (next && next.run === ln.run && next.mass >= maxMass * 0.3 && (ln.y1 - ln.y0) <= (next.y1 - next.y0) * 0.5) { next.y0 = ln.y0; }
   }
@@ -346,8 +358,26 @@ function measure(bin, lines) {
 export function isolateDominant(bin, lines, { tol = 0.28 } = {}) {
   const ms = lines.map((ln) => ({ ln, m: lineMetrics(bin, ln) })).filter((x) => x.m);
   if (!ms.length) return null;
-  const capMax = Math.max(...ms.map((x) => x.m.cap));
-  const keep = ms.filter((x) => x.m.cap >= capMax * (1 - tol));
+  // The dominant class is the one holding most of the ink, not the tallest
+  // line: a body-copy crop that clips the last line of the headline above it
+  // is body copy. Cluster caps within tol of each other and pick the cluster
+  // with the most ink mass; the tallest wins only a tie.
+  const clusters = [];
+  for (const x of [...ms].sort((a, b) => b.m.cap - a.m.cap)) {
+    const c = clusters.find((cl) => Math.abs(cl.cap - x.m.cap) <= cl.cap * tol);
+    if (c) { c.items.push(x); c.mass += x.ln.mass || 0; } else clusters.push({ cap: x.m.cap, items: [x], mass: x.ln.mass || 0 });
+  }
+  // Mass per line-height, so one heavy display line does not outvote five
+  // lines of body copy; and a cluster of a single clipped line never wins
+  // over a cluster of three or more.
+  for (const c of clusters) { c.rows = c.items.reduce((n, x) => n + (x.ln.y1 - x.ln.y0), 0); c.density = c.mass / Math.max(1, c.rows); c.n = c.items.length; }
+  clusters.sort((a, b) => {
+    const aMulti = a.n >= 3, bMulti = b.n >= 3;
+    if (aMulti !== bMulti) return aMulti ? -1 : 1;
+    return (b.mass - a.mass) || (b.cap - a.cap);
+  });
+  const keep = clusters[0].items;
+  const capMax = Math.max(...keep.map((x) => x.m.cap));
   // horizontal extent of the kept lines' tallest ink columns only: a small
   // column of body text beside the headline shares its rows but not its height
   const { W, ink } = bin;
@@ -391,7 +421,7 @@ export function fingerprint(img, { minCap = 24, minGlyphs = 3, isolate = true } 
     const iso = isolateDominant(bin, lines);
     if (iso && (iso.dropped > 0 || iso.x1 - iso.x0 < bin.W * 0.9)) {
       bin = maskOutside(bin, iso.x0, iso.x1, iso.lines);
-      lines = findLines(bin).lines.length ? findLines(bin).lines : iso.lines;
+      lines = iso.lines;
       isolated = iso.dropped;
     }
   }
@@ -405,6 +435,12 @@ export function fingerprint(img, { minCap = 24, minGlyphs = 3, isolate = true } 
     const up = resize(img, img.width * scale, img.height * scale);
     bin = binarize(up);
     lines = findLines(bin).lines;
+    // the upsample re-reads the whole crop: isolate again so the clipped
+    // headline or the drawing does not come back at scale
+    if (isolate && lines.length > 1) {
+      const iso2 = isolateDominant(bin, lines);
+      if (iso2 && (iso2.dropped > 0 || iso2.x1 - iso2.x0 < bin.W * 0.9)) { bin = maskOutside(bin, iso2.x0, iso2.x1, iso2.lines); lines = iso2.lines; isolated = Math.max(isolated, iso2.dropped); }
+    }
     const f2 = lines.length ? measure(bin, lines) : null;
     if (f2) f = f2;
     else scale = 1;

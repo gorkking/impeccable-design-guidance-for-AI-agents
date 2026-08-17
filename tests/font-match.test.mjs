@@ -173,3 +173,20 @@ describe('font-match', () => {
     assert.ok(distance(rIn.fp, inter) < distance(rIn.fp, lg), 'rendered Inter is nearer its own index entry');
   });
 });
+
+describe('font-fingerprint on mixed crops', () => {
+  it('measures the body copy, not the drawing beside it or the headline clipped above it', () => {
+    // 460x300 crop: one clipped headline line at the top (cap ~34), five lines
+    // of body copy (cap ~10), and a dense drawing (a noise block) at the bottom
+    const img = createImage(460, 300, [235, 232, 220, 255]);
+    drawText(img, 'THE MANIFOLDS', 4, 2, [20, 20, 20, 255], 5);
+    for (let i = 0; i < 5; i++) drawText(img, 'fresh cables slides return cleanly and the', 4, 60 + i * 24, [20, 20, 20, 255], 2);
+    let seed = 7; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 0xffffffff);
+    for (let y = 190; y < 300; y++) for (let x = 0; x < 300; x++) { const v = 40 + Math.floor(rnd() * 180); const p = (y * 460 + x) * 4; img.data[p] = v; img.data[p + 1] = v; img.data[p + 2] = v; }
+    const fp = fingerprint(img);
+    assert.ok(fp, 'lettering found');
+    assert.ok(fp.capHeightPx >= 8 && fp.capHeightPx <= 14, `body cap measured, got ${fp.capHeightPx}`);
+    assert.ok(fp.lines >= 4, `body lines, got ${fp.lines}`);
+    assert.ok(fp.isolatedFrom >= 1, 'the headline line was set aside');
+  });
+});
