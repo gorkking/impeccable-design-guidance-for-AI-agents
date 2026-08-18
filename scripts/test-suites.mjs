@@ -96,15 +96,24 @@ export const SUITES = {
     ],
   },
   live: {
-    description: 'Live-mode reference contract checks (the live verbs are covered by the oracle and framework suites).',
+    description: 'Live-mode reference contract checks plus the live-e2e helper units (agent output, CLI options, LLM agent parsing, steer loop against the binary); the live verbs themselves are covered by the oracle and framework suites.',
     triggers: [
       ...COMMON_INFRA_PATTERNS,
       /^skill\/(reference\/live\.md|scripts\/live-browser)/,
+      /^tests\/live-e2e\//,
+      /^tests\/lib\/engine-bin\.mjs$/,
     ],
     commands: [
       {
         runner: 'node',
-        files: ['tests/live-reference.test.mjs'],
+        files: [
+          'tests/live-reference.test.mjs',
+          'tests/live-e2e-agent-output.test.mjs',
+          'tests/live-e2e-cli-options.test.mjs',
+          'tests/live-e2e-llm-agent.test.mjs',
+          'tests/live-e2e-steer-agent.test.mjs',
+          'tests/live-e2e/agent-insert.test.mjs',
+        ],
       },
     ],
   },
@@ -164,16 +173,6 @@ export const SUITES = {
       /^tests\/live-e2e(\.test\.mjs|\/)/,
     ],
     commands: [
-      {
-        runner: 'node',
-        files: [
-          'tests/live-e2e-agent-output.test.mjs',
-          'tests/live-e2e-cli-options.test.mjs',
-          'tests/live-e2e-llm-agent.test.mjs',
-          'tests/live-e2e-steer-agent.test.mjs',
-          'tests/live-e2e/agent-insert.test.mjs',
-        ],
-      },
       {
         runner: 'node',
         timeoutMs: 600000,
