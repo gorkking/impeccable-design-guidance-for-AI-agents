@@ -270,6 +270,20 @@ describe('build-phase state machine (CLI)', () => {
     assert.match(res.stdout, /ADVANCED plates -> hero/);
   });
 
+  it('scaffold writes the measured layout as custom properties and a reference page', () => {
+    const res = run(PHASE_SCRIPT, ['scaffold'], dir);
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    assert.match(res.stdout, /SCAFFOLD/);
+    const css = fs.readFileSync(path.join(dir, '.impeccable', 'build', 'scaffold', 'layout.css'), 'utf8');
+    assert.match(css, /--r-headline-x: [\d.]+%; --r-headline-y: [\d.]+%; --r-headline-w: [\d.]+%; --r-headline-h: [\d.]+%;/);
+    assert.match(css, /--r-headline-cap: [\d.]+px/);
+    assert.match(css, /\.r-art \{ position: absolute; left: var\(--r-art-x\)/);
+    const html = fs.readFileSync(path.join(dir, '.impeccable', 'build', 'scaffold', 'hero-reference.html'), 'utf8');
+    assert.match(html, /class="r-art region plate"[^>]*><img src="[^"]*assets\/plates\/art\.png"/);
+    assert.match(html, /class="r-headline region text"/);
+    assert.match(css, /aspect-ratio: 640 \/ 400/);
+  });
+
   it('hero gate fails on a flat build and passes on a faithful one, recording attempts', () => {
     const comp = makeComp();
     const flat = createImage(comp.width, comp.height, [240, 237, 226, 255]);
