@@ -197,12 +197,12 @@ Paul reviewed every sweep-3/4/5 build against its comp on a click-to-annotate pa
 
 | verdict | comp-diff overall of those samples |
 |---|---|
-| pass (2) | 73 (opus main 05), 70 (opus branch 11) |
+| pass (4) | 73 (opus main 05), 70 (opus branch 11), **80 (opus branch 05, sweep 7: "by far the best result so far")**, 68 (opus branch 07, sweep 7: "borderline pass") |
 | "pass except one bug" (1) | 86 (opus branch 05: cover arch clipped by its box) |
-| unsure (9) | 61-74 |
-| fail (20) | 43-68 |
+| unsure (10) | 61-74 |
+| fail (27) | 43-68 |
 
-So the human pass line sits at about 70-73 on comp-diff, and `HERO_MIN` at 0.72 is inside it. Every main build was a fail except one opus sample; branch builds were the only ones rated pass or unsure on 07 and 11.
+So the human pass line sits at about 68-73 on comp-diff, and `HERO_MIN` at 0.72 is inside it. Every main build was a fail except one opus sample; branch builds were the only ones rated pass or unsure on 07 and 11, and the sweep-7 opus builds (with the readings from this review) hold three of the four passes.
 
 The pins, grouped, and what each became:
 
@@ -223,6 +223,8 @@ The pins, grouped, and what each became:
 | chart lines less dense (1) | not mechanised (a chart drawn in code) |
 | "arguably better" deviations: a colour that fixes contrast, a label moved (3) | by design: the contract wins at the hero; a stated second pass after it may change it |
 | a note by the model itself: "the grid boxes straddle two elements, CSS cannot fix the structure penalty" | it was right: text and control regions now snap to the largest ink mass in their span |
+| "bad asset crop (crops are never allowed)" (2) | plates gate refuses a file that resamples the comp region (structure 95%+ against the raw crop) |
+| "letter spacing way too wide" (1) | tracking reading (glyph gap in cap units) |
 
 Two verdict boundaries the review drew: close-enough icon glyphs are acceptable; arrows, chevrons, dropdown chrome, and control borders and fills are the comp's (controls are held like text at the hero now).
 
