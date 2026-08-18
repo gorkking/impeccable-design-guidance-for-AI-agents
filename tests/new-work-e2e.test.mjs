@@ -9,8 +9,12 @@
  * live-e2e; run it with `bun run test:new-work-e2e`.
  *
  * The concept-seed direction roll (challengers, ASSIGNED INDEX, the no
- * PRODUCT.md gate) is already covered by tests/concept-seed.test.mjs and is
- * not repeated here.
+ * PRODUCT.md gate) is pinned by the oracle corpus (tests/oracle, `seed-*`
+ * cases) and is not repeated here.
+ *
+ * Both verbs (`serve-question`, `generate-image`) run through the engine
+ * binary from tests/lib/engine-bin.mjs (IMPECCABLE_BIN or
+ * skill/scripts/bin/<os>-<arch>/); the suite fails loudly without one.
  *
  * One-time setup:  npx playwright install chromium
  */
@@ -24,16 +28,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { runUserBot } from './new-work-e2e/user-bot.mjs';
+import { ENGINE_MISSING_MESSAGE, engineEnv, findEngineBinary } from './lib/engine-bin.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const SERVE = path.join(ROOT, 'skill', 'scripts', 'serve-question.mjs');
-const GENERATE = path.join(ROOT, 'skill', 'scripts', 'generate-image.mjs');
+const ENGINE_BIN = findEngineBinary();
 const CATALOG_DIR = path.join(ROOT, 'tests', 'fixtures', 'concept-catalog');
 
 let playwright;
 let browser;
 
 before(async () => {
+  if (!ENGINE_BIN) throw new Error(ENGINE_MISSING_MESSAGE);
   try {
     playwright = await import('playwright');
   } catch (err) {
@@ -67,9 +72,9 @@ function makeWorkspace() {
 // serve-question writes its state under cwd; run everything from the workspace.
 function run(args, cwd) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [SERVE, ...args], {
+    const child = spawn(ENGINE_BIN, ['serve-question', ...args], {
       cwd,
-      env: { ...process.env, IMPECCABLE_QUESTION_FORCE: '1', IMPECCABLE_CATALOG_DIR: CATALOG_DIR },
+      env: engineEnv(ENGINE_BIN, { IMPECCABLE_QUESTION_FORCE: '1', IMPECCABLE_CATALOG_DIR: CATALOG_DIR }),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let out = '';
@@ -112,10 +117,10 @@ function makeFakeImage(cwd, prompt, outName) {
 }
 
 function spawnSyncGen(prompt, out, size = null) {
-  const args = [GENERATE, '--prompt', prompt, '--out', out];
+  const args = ['generate-image', '--prompt', prompt, '--out', out];
   if (size) args.push('--size', size);
-  return spawnSync(process.execPath, args, {
-    env: { ...process.env, IMPECCABLE_IMAGE_GEN_FAKE: '1' },
+  return spawnSync(ENGINE_BIN, args, {
+    env: engineEnv(ENGINE_BIN, { IMPECCABLE_IMAGE_GEN_FAKE: '1' }),
     encoding: 'buffer',
   });
 }
