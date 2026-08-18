@@ -88,7 +88,7 @@ function paletteOf(img) {
 }
 
 /** Words in a region note that name painted material rather than code-drawn UI. */
-export const PAINTED_NOTE = /\b(diagram|drawing|drawn|illustration|illustrations|illustrated|figure|schematic|exploded|photo|photos|photograph\w*|picture|painting|painted|render|rendered|rendering|artwork|engraving|etching|linework|line art|texture|textured|textures|grain|fabric|halftone|watercolou?r|sketch|sketched|blueprint|technical geometry|carburetor geometry|product shot|hero image|3d)\b/i;
+export const PAINTED_NOTE = /\b(diagram|drawing|drawn|illustration|illustrations|illustrated|figure|schematic|exploded|photo|photos|photograph\w*|picture|painting|painted|render|rendered|rendering|artwork|engraving|etching|linework|line art|texture|textured|textures|grain|fabric|halftone|watercolou?r|sketch|sketched|blueprint|geometry|leader lines?|callout lines?|thumbnail|silhouette|product shot|hero image|3d)\b/i;
 
 /** A text/control/chrome region larger than this fraction of the comp is a column, not an element. */
 export const MAX_CODE_REGION_AREA = 0.25;

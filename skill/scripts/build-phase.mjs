@@ -581,7 +581,13 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   if (otherContradicted.length > Math.max(1, Math.floor(report.regions.length / 3))) reasons.push(`${otherContradicted.length} of ${report.regions.length} regions contradicted: ${otherContradicted.map((r) => r.id).join(', ')}`);
   // A CSS-drawn organic contour sitting on a raster region's box is the plate
   // replaced by code, whatever the pixels score.
-  const artifactFile = artifact || state.artifact || null;
+  // A start with --direction records no artifact; the page is still there.
+  // Read index.html (or the one .html at the root) so the code scans run.
+  let artifactFile = artifact || state.artifact || null;
+  if (!artifactFile || !fs.existsSync(artifactFile)) {
+    if (fs.existsSync('index.html')) artifactFile = 'index.html';
+    else { try { const htmls = fs.readdirSync('.').filter((f) => /\.html?$/i.test(f)); if (htmls.length === 1) artifactFile = htmls[0]; } catch { /* leave */ } }
+  }
   if (artifactFile && fs.existsSync(artifactFile) && specForRefs) {
     const organic = organicClipRegions(artifactFile, specForRefs);
     for (const r of organic) reasons.push(`artifact draws an organic clip-path (${r.snippet}) inside raster region ${r.id}'s box; that region ships as its plate, never as a polygon`);
