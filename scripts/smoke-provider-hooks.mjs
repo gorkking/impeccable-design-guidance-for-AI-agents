@@ -377,7 +377,7 @@ function stripImpeccableHookEntry(entry) {
 }
 
 function containsImpeccableHook(value) {
-  if (typeof value === 'string') return value.includes('skills/impeccable/scripts/hook') || value.includes('.cursor/pre-log.mjs');
+  if (typeof value === 'string') return value.includes('skills/impeccable/scripts/impeccable') || value.includes('.cursor/pre-log.mjs');
   if (Array.isArray(value)) return value.some(containsImpeccableHook);
   if (value && typeof value === 'object') return Object.values(value).some(containsImpeccableHook);
   return false;
@@ -387,24 +387,19 @@ function verifyInstallShape() {
   const claude = readText('.claude/settings.local.json');
   const codex = readText('.codex/hooks.json');
   const cursor = readText('.cursor/hooks.json');
-  assertCount(claude, '.claude/skills/impeccable/scripts/hook.mjs', 1, 'Claude hook.mjs');
-  assertCount(codex, '.agents/skills/impeccable/scripts/hook.mjs', 1, 'Codex hook.mjs');
-  assertCount(cursor, '.cursor/skills/impeccable/scripts/hook-before-edit.mjs', 1, 'Cursor preToolUse');
-  assertCount(cursor, '.cursor/skills/impeccable/scripts/hook-after-edit.mjs', 0, 'Cursor afterFileEdit');
-  assertCount(cursor, '.cursor/skills/impeccable/scripts/hook-stop.mjs', 0, 'Cursor stop');
+  assertCount(claude, '.claude/skills/impeccable/scripts/impeccable" hook', 1, 'Claude hook');
+  assertCount(codex, '.agents/skills/impeccable/scripts/impeccable" hook', 1, 'Codex hook');
+  assertCount(cursor, '.cursor/skills/impeccable/scripts/impeccable" hook-before-edit', 1, 'Cursor preToolUse');
   for (const text of [claude, codex, cursor]) {
-    if (text.includes('hook-probe.mjs')) throw new Error('hook-probe.mjs still appears in hook manifests');
+    if (text.includes('.mjs')) throw new Error('a Node hook script still appears in hook manifests');
   }
   for (const rel of [
-    '.claude/skills/impeccable/scripts/hook.mjs',
-    '.claude/skills/impeccable/scripts/hook-lib.mjs',
-    '.claude/skills/impeccable/scripts/detector/cli/main.mjs',
-    '.agents/skills/impeccable/scripts/hook.mjs',
-    '.agents/skills/impeccable/scripts/hook-lib.mjs',
-    '.agents/skills/impeccable/scripts/detector/cli/main.mjs',
-    '.cursor/skills/impeccable/scripts/hook-before-edit.mjs',
-    '.cursor/skills/impeccable/scripts/hook-lib.mjs',
-    '.cursor/skills/impeccable/scripts/detector/cli/main.mjs',
+    '.claude/skills/impeccable/scripts/impeccable',
+    '.claude/skills/impeccable/scripts/VERSION',
+    '.agents/skills/impeccable/scripts/impeccable',
+    '.agents/skills/impeccable/scripts/VERSION',
+    '.cursor/skills/impeccable/scripts/impeccable',
+    '.cursor/skills/impeccable/scripts/VERSION',
   ]) {
     assertPath(join(targetRepo, rel), rel);
   }
@@ -468,7 +463,7 @@ function runDirectContractChecks() {
   clearRuntimeState();
   const file = writeBadFixture(smokeFiles.direct);
   const env = { IMPECCABLE_HOOK_LOG: join(smokeDir, 'direct.ndjson') };
-  const claude = run('node', ['.claude/skills/impeccable/scripts/hook.mjs'], {
+  const claude = run('.claude/skills/impeccable/scripts/impeccable', ['hook'], {
     cwd: targetRepo,
     env,
     logName: 'direct-claude.log',
@@ -477,7 +472,7 @@ function runDirectContractChecks() {
   requireFinding('direct Claude hook', `${claude.stdout}\n${readMaybe(join(smokeDir, 'direct.ndjson'))}`);
 
   clearRuntimeState();
-  const codex = run('node', ['.agents/skills/impeccable/scripts/hook.mjs'], {
+  const codex = run('.agents/skills/impeccable/scripts/impeccable', ['hook'], {
     cwd: targetRepo,
     env,
     logName: 'direct-codex.log',
@@ -486,7 +481,7 @@ function runDirectContractChecks() {
   requireFinding('direct Codex hook', `${codex.stdout}\n${readMaybe(join(smokeDir, 'direct.ndjson'))}`);
 
   clearRuntimeState();
-  const pre = run('node', ['.cursor/skills/impeccable/scripts/hook-before-edit.mjs'], {
+  const pre = run('.cursor/skills/impeccable/scripts/impeccable', ['hook-before-edit'], {
     cwd: targetRepo,
     env,
     logName: 'direct-cursor-before.log',
@@ -527,8 +522,8 @@ function runConfirmedExceptionForProvider(provider) {
   requireRuleFinding(`${provider} confirmed exception first hook`, `${first.stdout}\n${first.stderr}\n${readMaybe(join(smokeDir, beforeLog))}`, 'overused-font');
   assertNoSpecificFontIgnoreConfig(provider);
 
-  run('node', [
-    providerAdminScript(provider),
+  run(providerLauncher(provider), [
+    'hooks',
     'ignore-value',
     'overused-font',
     'Roboto',
@@ -715,7 +710,7 @@ function readSharedHookConfig() {
 function runInstalledProviderHook(provider, file, logName) {
   const env = { IMPECCABLE_HOOK_LOG: join(smokeDir, logName) };
   if (provider === 'claude') {
-    return run('node', ['.claude/skills/impeccable/scripts/hook.mjs'], {
+    return run('.claude/skills/impeccable/scripts/impeccable', ['hook'], {
       cwd: targetRepo,
       env,
       logName: `direct-${provider}-confirmed-${logName.replace(/\.ndjson$/, '.log')}`,
@@ -723,7 +718,7 @@ function runInstalledProviderHook(provider, file, logName) {
     });
   }
   if (provider === 'codex') {
-    return run('node', ['.agents/skills/impeccable/scripts/hook.mjs'], {
+    return run('.agents/skills/impeccable/scripts/impeccable', ['hook'], {
       cwd: targetRepo,
       env,
       logName: `direct-${provider}-confirmed-${logName.replace(/\.ndjson$/, '.log')}`,
@@ -731,7 +726,7 @@ function runInstalledProviderHook(provider, file, logName) {
     });
   }
   if (provider === 'cursor') {
-    return run('node', ['.cursor/skills/impeccable/scripts/hook-before-edit.mjs'], {
+    return run('.cursor/skills/impeccable/scripts/impeccable', ['hook-before-edit'], {
       cwd: targetRepo,
       env,
       logName: `direct-${provider}-confirmed-${logName.replace(/\.ndjson$/, '.log')}`,
@@ -763,10 +758,10 @@ function agentChoiceSmokeFile(provider) {
   throw new Error(`Unsupported agent-choice provider: ${provider}`);
 }
 
-function providerAdminScript(provider) {
-  if (provider === 'claude') return '.claude/skills/impeccable/scripts/hook-admin.mjs';
-  if (provider === 'codex') return '.agents/skills/impeccable/scripts/hook-admin.mjs';
-  if (provider === 'cursor') return '.cursor/skills/impeccable/scripts/hook-admin.mjs';
+function providerLauncher(provider) {
+  if (provider === 'claude') return '.claude/skills/impeccable/scripts/impeccable';
+  if (provider === 'codex') return '.agents/skills/impeccable/scripts/impeccable';
+  if (provider === 'cursor') return '.cursor/skills/impeccable/scripts/impeccable';
   throw new Error(`Unsupported admin provider: ${provider}`);
 }
 
