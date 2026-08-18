@@ -18,6 +18,7 @@ const forceOptIn = eventName === 'workflow_dispatch';
 const plan = isSchedule
   ? {
     core: true,
+    oracle: true,
     detector: true,
     live: true,
     framework: true,
@@ -29,6 +30,7 @@ const plan = isSchedule
   }
   : {
     core: true,
+    oracle: forceDeterministic || matchesSuiteTriggers('oracle', changedFiles),
     detector: forceDeterministic || matchesSuiteTriggers('detector', changedFiles),
     live: forceDeterministic || matchesSuiteTriggers('live', changedFiles),
     framework: forceDeterministic || matchesSuiteTriggers('framework', changedFiles),
