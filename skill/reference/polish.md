@@ -29,7 +29,7 @@ Use the feature yourself at the surface's representative sizes: desktop and mobi
 If a prior critique exists, use it as one input:
 
 ```bash
-node {{scripts_path}}/critique-storage.mjs latest "<resolved target>"
+{{scripts_path}}/impeccable critique-storage latest "<resolved target>"
 ```
 
 Exit 0 returns the latest snapshot; incorporate relevant P0/P1 findings and name the snapshot read. Exit 2 means none exists. Perform an independent pass either way.
@@ -92,6 +92,6 @@ Walk the complete path again with mouse, keyboard, and touch where applicable. C
 - console errors, layout shift, interaction latency, and image loading everywhere; supported browsers on the web; supported OS versions, runtime warnings, and dropped frames on native;
 - agreement with DESIGN.md, neighboring features, and the user's scope.
 
-Follow the quality guidance supplied by `context.mjs` and hooks, then run any other relevant QA commands. Context requests a manual scan only when no automatic detector is active; never add another detector pass. Fix real defects and document only narrow intentional exceptions. A clean scan does not replace visual judgment.
+Follow the quality guidance supplied by `impeccable context` and hooks, then run any other relevant QA commands. Context requests a manual scan only when no automatic detector is active; never add another detector pass. Fix real defects and document only narrow intentional exceptions. A clean scan does not replace visual judgment.
 
 Finish with a source diff: remove accidental churn, orphaned code, redundant values, and temporary artifacts. Ship only when the feature is functionally complete and consistently finished across the path.

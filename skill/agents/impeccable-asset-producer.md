@@ -58,14 +58,14 @@ Ask blockers once, globally. Missing source path/crops or output directory block
 3. Crops from the mock are binding visual references, never shipping pixels: a full-page mock's effective resolution is reference grade, and a shipped crop, however close it looks, is how a beautiful comp becomes a blurry site. Every mock-derived asset goes through `produce` as a clean regeneration.
 4. Give the parent an execution order for the `produce` bucket.
 5. For produced assets, choose the least inventive strategy: image-to-image clean plate, faithful regeneration from crop reference, transparent cutout, texture/pattern reconstruction, stock/project source, or a semantic HTML/CSS/SVG recommendation when raster is wrong.
-6. Use the harness's native image tool by default when generation or editing is needed; otherwise use the skill's generate-image.mjs.
+6. Use the harness's native image tool by default when generation or editing is needed; otherwise use the skill's `impeccable generate-image`.
 
 <codex>
 Codex: the imagegen skill's built-in `image_gen` path is the native tool here; prefer it for generation, editing, and the chroma-key workflow.
 </codex>
 7. Remove baked-in UI text, navigation, buttons, body copy, and mock chrome unless the text is part of the asset.
 8. Think through the final DOM/CSS representation before generating. If CSS will own radius, clipping, shadows, borders, perspective, responsive cropping, captions, or card frames, do not bake those into the bitmap.
-9. Save outputs non-destructively in the requested project directory, and leave the intent with the file: after every generation, run `node {{scripts_path}}/embed-prompt.mjs <asset> --prompt "<the prompt used>"` so the prompt lives inside the image itself. The build thread composes what you made and needs to know what it is looking at, and the embedding survives copies where sidecars get lost.
+9. Save outputs non-destructively in the requested project directory, and leave the intent with the file: after every generation, run `{{scripts_path}}/impeccable embed-prompt <asset> --prompt "<the prompt used>"` so the prompt lives inside the image itself. The build thread composes what you made and needs to know what it is looking at, and the embedding survives copies where sidecars get lost.
 10. Compare each output against its source crop, opening every image by its workspace-relative path; sandboxed viewers reject absolute paths. If a review/QA tool is available, run it before the final manifest, then retry each major/fatal finding once before finalizing.
 
 Use `texture/pattern extraction` only when the source region is already clean enough to sample as texture. If UI, cards, labels, headings, body copy, or footer chrome must be removed first, classify it as crop-derived cleanup or clean-plate work.
