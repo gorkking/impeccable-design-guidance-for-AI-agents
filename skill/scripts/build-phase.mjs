@@ -68,7 +68,8 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { decodePng, loadRaster } from './lib/png.mjs';
 const require = createRequire(import.meta.url);
-import { crop, createImage, blit } from './lib/raster.mjs';
+import { crop, createImage, blit, resize } from './lib/raster.mjs';
+import { structureScore } from './lib/image-metrics.mjs';
 import { compare, verdictFor, alignBuild, bestShift } from './comp-diff.mjs';
 import { textRegionCheck, chromeStripCheck, inventedInk, plateClipCheck } from './lib/hero-checks.mjs';
 import { SPEC_PATH, BUILD_DIR, loadSpec, plateReference } from './comp-spec.mjs';
@@ -294,6 +295,15 @@ export function gatePlates(state, { specPath = SPEC_PATH } = {}) {
       score = res.whole;
       const v = plateVerdict(r, score);
       for (const reason of v.reasons) reasons.push(`plate ${file}: ${reason}`);
+      // A plate that matches the comp crop almost exactly is the comp crop,
+      // upscaled past the size floor: the comp's grain, its neighbours'
+      // edges, and its resolution ship as the artwork. Crops are never
+      // plates; the crop is the reference the plate is generated from.
+      if (!isTexture) {
+        const raw = crop(comp, r.px.x, r.px.y, r.px.w, r.px.h);
+        const same = structureScore(raw, resize(img, raw.width, raw.height));
+        if (same >= 0.95) reasons.push(`plate ${file} is the comp crop of region ${r.id} (structure ${(same * 100).toFixed(0)}% against the raw region, a resample of the same pixels): a crop of the comp is never a plate; generate the plate from the crop as reference (generate-image.mjs --plate ${r.id})`);
+      }
     }
     plates.push({ id: r.id, file, status: 'ok', size: `${img.width}x${img.height}`, score: score ? score.overall : null });
   }

@@ -74,6 +74,11 @@ export function textRegionCheck(region, compCrop, buildCrop, { capTol = 0.22, mi
       if (Math.abs(dp) > 0.2) findings.push(`text ${region.id}: line pitch ${Math.round(pb)}px in the build, ${Math.round(pa)}px in the comp (${dp > 0 ? '+' : ''}${Math.round(dp * 100)}%); set line-height so ${comp.lines} lines stand ${Math.round(ba0.h)}px tall`);
     }
   }
+  // tracking: the gap between glyphs in cap units, when both sides read it
+  if (comp.gap != null && bfp.gap != null && Math.abs(capDelta) <= capTol && comp.glyphs >= 8 && bfp.glyphs >= 8) {
+    const dg = bfp.gap - comp.gap;
+    if (Math.abs(dg) > Math.max(0.03, comp.gap * 0.5)) findings.push(`text ${region.id}: letter-spacing is ${dg > 0 ? 'wider' : 'tighter'} than the comp's (gap ${bfp.gap.toFixed(3)} vs ${comp.gap.toFixed(3)} of the cap height); set letter-spacing to ${dg > 0 ? 'close' : 'open'} it by about ${Math.abs(Math.round(dg * comp.capHeightPx))}px`);
+  }
   // weight: compare ink density of tall glyphs when both sides have it and
   // the sizes agree (density at a different cap is a different reading)
   if (comp.densTall != null && bfp.densTall != null && Math.abs(capDelta) <= capTol) {

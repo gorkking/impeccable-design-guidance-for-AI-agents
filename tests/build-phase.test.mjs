@@ -253,9 +253,18 @@ describe('build-phase state machine (CLI)', () => {
     res = run(PHASE_SCRIPT, ['advance'], dir);
     assert.equal(res.status, 2);
     assert.match(res.stdout, /needs at least 480px/);
-    // 2x crop passes size and similarity
+    // 2x crop of the comp: sized right, but a crop is never a plate
     res = run(SPEC_SCRIPT, ['--crop', 'art', '--scale', '2', '--out', 'assets/plates/art.png'], dir);
     assert.equal(res.status, 0, res.stderr);
+    res = run(PHASE_SCRIPT, ['advance'], dir);
+    assert.equal(res.status, 2, res.stdout);
+    assert.match(res.stdout, /is the comp crop of region art/);
+    // a produced plate: the same material rendered fresh (another noise field
+    // of the same statistics), at 2x
+    const produced = createImage(640, 320, [0, 0, 0, 255]);
+    const rndP = lcg(99);
+    for (let y = 0; y < 320; y++) for (let x = 0; x < 640; x++) { const v = 100 + Math.floor(rndP() * 140); const q = (y * 640 + x) * 4; produced.data[q] = v; produced.data[q + 1] = v; produced.data[q + 2] = v; }
+    fs.writeFileSync(path.join(dir, 'assets', 'plates', 'art.png'), encodePng(produced));
     res = run(PHASE_SCRIPT, ['advance'], dir);
     assert.equal(res.status, 0, res.stdout);
     assert.match(res.stdout, /ADVANCED plates -> hero/);
@@ -346,7 +355,9 @@ describe('build-phase state machine (CLI)', () => {
     run(PHASE_SCRIPT, ['start', '--comp', 'comp.png', '--artifact', 'index.html'], d3);
     run(SPEC_SCRIPT, ['--comp', 'comp.png', '--regions', 'regions.json'], d3);
     run(PHASE_SCRIPT, ['advance'], d3);
-    run(SPEC_SCRIPT, ['--crop', 'art', '--scale', '2', '--out', 'assets/plates/art.png'], d3);
+    // a produced plate (fresh noise of the same statistics), not the crop
+    fs.mkdirSync(path.join(d3, 'assets', 'plates'), { recursive: true });
+    { const produced = createImage(640, 320, [0, 0, 0, 255]); const rndP = lcg(77); for (let y = 0; y < 320; y++) for (let x = 0; x < 640; x++) { const v = 100 + Math.floor(rndP() * 140); const q = (y * 640 + x) * 4; produced.data[q] = v; produced.data[q + 1] = v; produced.data[q + 2] = v; } fs.writeFileSync(path.join(d3, 'assets', 'plates', 'art.png'), encodePng(produced)); }
     run(PHASE_SCRIPT, ['advance'], d3);
     fs.writeFileSync(path.join(d3, 'index.html'), '<img src="assets/plates/art.png"><style>.a{padding:1px}</style>');
     const flat = createImage(comp.width, comp.height, [240, 237, 226, 255]);
