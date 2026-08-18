@@ -71,7 +71,7 @@ const require = createRequire(import.meta.url);
 import { crop, createImage, blit, resize } from './lib/raster.mjs';
 import { structureScore } from './lib/image-metrics.mjs';
 import { compare, verdictFor, alignBuild, bestShift } from './comp-diff.mjs';
-import { textRegionCheck, chromeStripCheck, inventedInk, plateClipCheck } from './lib/hero-checks.mjs';
+import { textRegionCheck, chromeStripCheck, inventedInk, plateClipCheck, svgIllustrations } from './lib/hero-checks.mjs';
 import { SPEC_PATH, BUILD_DIR, loadSpec, plateReference } from './comp-spec.mjs';
 import { choiceStamped } from './font-match.mjs';
 
@@ -521,6 +521,15 @@ export function gateHero(state, { buildPath = HERO_REPRO, specPath = SPEC_PATH, 
   if (artifactFile && fs.existsSync(artifactFile) && specForRefs) {
     const organic = organicClipRegions(artifactFile, specForRefs);
     for (const r of organic) reasons.push(`artifact draws an organic clip-path (${r.snippet}) inside raster region ${r.id}'s box; that region ships as its plate, never as a polygon`);
+    // Inline SVG past an icon's budget is a drawing in code: the single most
+    // repeated pin of the human review ("terrible svg instead of asset",
+    // "lines that point nowhere"), on every model. Icons, arrows and
+    // chevrons pass; diagrams, notation, and leader lines do not; those are
+    // plates, or part of the plate they annotate.
+    let svgs = [];
+    try { svgs = svgIllustrations(fs.readFileSync(artifactFile, 'utf8')); } catch { svgs = []; }
+    for (const v of svgs.slice(0, 6)) reasons.push(`artifact draws an illustration in inline SVG${v.label ? ` (${v.label})` : ''}: ${v.snippet}. Drawings, diagrams, notation, and leader lines are plates or belong to the plate they annotate; only icon-sized SVG (under 64px, a few paths) is code`);
+    if (svgs.length > 6) reasons.push(`...and ${svgs.length - 6} more inline SVG illustrations`);
   }
   // Numbers a designer reads off the side-by-side: type set at the wrong
   // size, weight, colour, or place; a nav bar too tall; ink where the comp
@@ -860,6 +869,14 @@ async function main() {
   if (cmd === 'finish') {
     const disposition = arg('disposition');
     if (!['ship', 'fix', 'rebuild', 'recapture'].includes(disposition)) { console.error('build-phase: finish --disposition ship|fix|rebuild|recapture'); process.exit(1); }
+    // A ship cannot be recorded over an open phase. The model can still stop
+    // talking, but it cannot write "ship" into the state with the hero open;
+    // sessions did exactly that and summarised the build as complete.
+    const openBefore = PHASES.filter((ph) => ph !== 'review' && state.phases[ph] && state.phases[ph].status !== 'closed' && state.phases[ph].status !== 'skipped');
+    if (disposition === 'ship' && openBefore.length) {
+      console.error(`build-phase: finish --disposition ship refused: ${openBefore.join(', ')} ${openBefore.length === 1 ? 'is' : 'are'} not closed (phase ${state.phase}). Record fix or rebuild, or close the phases first; a page shipped over an open hero is a page shipped against its own gate.`);
+      process.exit(2);
+    }
     state.finish = { disposition, at: now(), phaseAtFinish: state.phase };
     if (state.phase === 'review') { state.phases.review.status = 'closed'; state.phases.review.closedAt = now(); }
     saveState(state);

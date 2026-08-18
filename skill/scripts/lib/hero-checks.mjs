@@ -207,3 +207,40 @@ export function plateClipCheck(region, compCrop, buildCrop, { margin = 6 } = {})
   if (H - (a.y + a.h) >= margin && flush(H - (b.y + b.h))) sides.push('bottom');
   return { sides, comp: a, build: b };
 }
+
+/**
+ * Inline SVG that is an illustration, not an icon. An icon is small (a
+ * viewBox or box under `iconPx` on its long side) with a few paths; anything
+ * with a real path budget is a drawing in code: a diagram, a rack of
+ * carburetors, staff notation, leader lines with arrows, a "terrible svg
+ * approximation of the asset". Those ship as plates or as part of the plate
+ * they annotate. Returns one entry per offending <svg> with a snippet.
+ *
+ * `html` is the artifact source. `pathBudget` counts characters of path
+ * data (d="..."), points, and polyline/polygon points across the element.
+ */
+export function svgIllustrations(html, { iconPx = 64, pathBudget = 480, maxPaths = 8 } = {}) {
+  const out = [];
+  const re = /<svg\b([^>]*)>([\s\S]*?)<\/svg>/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    const attrs = m[1], body = m[2];
+    const paths = (body.match(/<path\b/gi) || []).length + (body.match(/<(polyline|polygon|line|circle|ellipse|rect)\b/gi) || []).length;
+    let budget = 0;
+    for (const d of body.matchAll(/\sd="([^"]*)"/g)) budget += d[1].length;
+    for (const pts of body.matchAll(/\spoints="([^"]*)"/g)) budget += pts[1].length;
+    const vb = /viewBox="\s*[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)/.exec(attrs);
+    const w = /\swidth="([\d.]+)(px)?"/.exec(attrs), h = /\sheight="([\d.]+)(px)?"/.exec(attrs);
+    const long = Math.max(vb ? Math.max(+vb[1], +vb[2]) : 0, w ? +w[1] : 0, h ? +h[1] : 0);
+    const iconSized = long > 0 && long <= iconPx && paths <= maxPaths;
+    const uses = /<use\b/i.test(body) && paths === 0; // a sprite reference
+    if (uses) continue;
+    if (iconSized && budget <= pathBudget) continue;
+    if (budget <= pathBudget && paths <= maxPaths && long === 0 && !/<(text|image)\b/i.test(body)) continue; // a tiny inline glyph with no size hint
+    if (budget > pathBudget || paths > maxPaths || (long > iconPx && paths > 0)) {
+      const id = /\b(id|class|aria-label|data-region)="([^"]+)"/i.exec(attrs);
+      out.push({ snippet: `<svg${attrs.slice(0, 80).replace(/\s+/g, ' ')}...> (${paths} shapes, ${budget} chars of path data${long ? `, ${long}px` : ''})`, label: id ? id[2] : null, paths, budget, long });
+    }
+  }
+  return out;
+}

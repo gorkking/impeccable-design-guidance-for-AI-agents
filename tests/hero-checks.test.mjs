@@ -58,3 +58,19 @@ describe('hero-checks: chrome strips and invented ink', () => {
     assert.ok(c.ink && /^#[0-9a-f]{6}$/.test(c.ink.hex));
   });
 });
+
+describe('hero-checks: inline SVG illustrations', () => {
+  it('lets icons, arrows and sprite references through and refuses drawings', async () => {
+    const { svgIllustrations } = await import('../skill/scripts/lib/hero-checks.mjs');
+    const icon = '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 8h12M9 3l5 5-5 5"/></svg>';
+    const chevron = '<svg viewBox="0 0 24 24" class="chev"><path d="M6 9l6 6 6-6"/></svg>';
+    const sprite = '<svg class="i"><use href="#wrench"/></svg>';
+    const diagram = '<svg viewBox="0 0 600 400" class="carb-rack">' + Array.from({ length: 30 }, (_, i) => `<path d="M${i * 10} 10 C ${i * 10 + 5} 40, ${i * 10 + 20} 60, ${i * 10 + 30} 90 L ${i * 10 + 40} 120 Z"/>`).join('') + '</svg>';
+    const staff = '<svg width="800" height="200">' + Array.from({ length: 12 }, (_, i) => `<line x1="0" y1="${i * 12}" x2="800" y2="${i * 12}"/>`).join('') + '</svg>';
+    assert.deepEqual(svgIllustrations(icon + chevron + sprite), []);
+    const found = svgIllustrations(icon + diagram + staff);
+    assert.equal(found.length, 2);
+    assert.equal(found[0].label, 'carb-rack');
+    assert.ok(found[0].paths >= 30);
+  });
+});
