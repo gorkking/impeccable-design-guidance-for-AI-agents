@@ -168,10 +168,10 @@ Both anthropic-lane readings of "skill loaded" were false-invalid: Claude Code 2
 
 Where this leaves the numbers, all sweeps, comp-diff overall against the approved comp, main vs branch:
 
-| | sol main | sol branch | opus main | opus branch |
+| | sol main | sol branch | opus main | opus branch (sweeps 5-8) |
 |---|---|---|---|---|
-| 05 | 43-56 (n=6) | 58-77 (n=5) | 61-73 (n=2) | 64-86 (n=2) |
-| 07 | 44-53 (n=5) | 62-69 (n=8) | 59-60 (n=2) | 67-74 (n=2) |
+| 05 | 43-56 (n=6) | 57-77 (n=8) | 61-73 (n=2) | 64-86 (n=6; sweep 8: 84, 84) |
+| 07 | 44-53 (n=5) | 48-69 (n=13) | 59-60 (n=2) | 43-79 (n=6; sweep 8: 79, 78) |
 | 11 | 61-66 (n=6) | 62-74 (n=5) | 61-64 (n=2) | 70 (n=1) |
 
 The branch is above main on every niche and every model; the gap is largest where the comp is most painted (05, 07) and smallest on the flat dashboard (11). Cost is 2-4x in turns and image calls.
@@ -238,3 +238,18 @@ Two verdict boundaries the review drew: close-enough icon glyphs are acceptable;
 | 07-002 | 68 | 67 in 2 attempts, then declared done | wrote a note diagnosing the grid boxes as the structure penalty (correct; fixed by snapping) |
 
 Opus with the readings reaches the human pass line on 05 (73-81 at the hero, 80 overall on the second) at 13-22 attempts, and the model's own diagnosis of the remaining structure penalty pointed at the region boxes, which now snap to their ink.
+
+## Eighth sweep (2026-08-17 night): SVG ban, crop refusal, snapping, folded readings, control chrome, finish guard, scaffold
+
+After Paul's full review and his rulings (close-enough icons fine; arrows and dropdown chrome are not; ban SVG illustrations; the scaffold as a reference, never the page), everything landed and this sweep ran with all of it. Turn cap 160.
+
+| Sample | overall | hero | notes |
+|---|---|---|---|
+| 07 opus 001 | **79** | 79 in 12 attempts | scaffold used; turn cap in hero |
+| 07 opus 002 | **78** | 79 in 13 attempts, sections, motion, responsive 78 | scaffold used; every region at its place, real plates at the right size |
+| 05 opus 001 | **84 (match)** | **85** in 10 attempts, responsive 84, review | scaffold used |
+| 05 opus 002 | **84 (match)** | **87** in 14 attempts, sections | scaffold used; turn cap |
+| 07 sol 001 | 48 | never entered (page at turn 5) | ignored the state |
+| 07 sol 002 | 66 | 67 in one attempt, stopped | scaffold used: for the first time on sol every region sat where the comp has it (spine, headline, thread box, table, footer); the two carburetor drawings were still inline SVG, named "countable ... geometry" chrome, and the SVG ban had not run because `state.artifact` is null on a `--direction` start. Both fixed after this sample (the code scans default to `index.html`; the painted-note regex knows "geometry", "leader lines", "thumbnail"). |
+
+Four of four opus samples above Paul's pass line, two of them `match`. 07, the comp that sat at 63-70 across every earlier sweep and both models, reads 78-79 on opus with the scaffold: above Paul's borderline pass (68) by ten points, at the level of the 05 build he called "by far the best result so far". The scaffold did on sol what no reading could: the positions are right; what remains on sol is the SVG reflex, and that is now refused.
